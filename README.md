@@ -150,3 +150,69 @@ Q7. 復仇機制
 
 如果對方積分是 0，復仇成功有其他獎勵嗎？
 
+
+● Based on the current project state and the roadmap in CLAUDE.md, here are my suggestions:
+
+  Next Steps Options
+
+  Option 1: Continue V3 Roadmap (Recommended)
+
+  Per /docs/V3_IMPLEMENTATION_ROADMAP.md, Phase 4 is Hero Skill System:
+
+  | Priority | Task                                 | Complexity |
+  |----------|--------------------------------------|------------|
+  | High     | Implement basic skill infrastructure | Medium     |
+  | High     | Add skill cooldown tracking          | Low        |
+  | High     | Implement 2-3 core skills first      | Medium     |
+
+  This is the natural next step but involves significant work (201 test cases in SKILL_SYSTEM_V3_TESTPLAN.md).
+
+  ---
+  Option 2: Complete Pending V3 Mechanics
+
+  There are simpler V3 mechanics not yet implemented:
+
+  | Task                                       | Complexity | Benefit                    |
+  |--------------------------------------------|------------|----------------------------|
+  | Minion Decay (-1 HP/round)                 | Low        | Core game balance          |
+  | Round 8 Pressure (-1 HP/round to all)      | Low        | Late-game urgency          |
+  | Death Choice (spawn obstacle or BUFF tile) | Medium     | Complete minion death flow |
+
+  These are smaller, self-contained features that could be done before the larger Skill System.
+
+  ---
+  Option 3: Refactoring Checkpoint
+
+  RuleEngine.java is now ~2000 lines. A refactoring pass could:
+
+  | Task                                              | Benefit                       |
+  |---------------------------------------------------|-------------------------------|
+  | Extract TurnManager class                         | Cleaner turn/round handling   |
+  | Extract CombatResolver class                      | Isolate damage/Guardian logic |
+  | Replace remaining new Unit(...) with unit.with*() | Reduce boilerplate            |
+
+  This would improve maintainability before adding more features.
+
+  ---
+  Option 4: Write Integration Tests
+
+  Current tests are mostly unit tests. Could add:
+  - Full game flow tests (start → play → victory)
+  - Multi-round scenario tests
+  - Client-server integration tests
+
+  ---
+  My Recommendation
+
+  Option 2: Complete Pending V3 Mechanics (Minion Decay + Round 8 Pressure)
+
+  Reasons:
+  1. Low complexity, quick wins
+  2. These are required for proper game balance
+  3. Build confidence before larger Skill System
+  4. Round-end processing infrastructure already exists
+
+  Estimated scope: ~30 minutes, ~10-15 new tests
+
+  Would you like me to proceed with Option 2, or do you prefer a different direction?
+
