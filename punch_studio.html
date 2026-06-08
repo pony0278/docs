@@ -240,9 +240,16 @@
       </div>
       <div class="ref-row" style="margin-top:8px; border-top:1px dashed var(--line); padding-top:9px">
         <button id="frontBtn" title="鏡頭轉到正面 θ=0">🎥 正面</button>
+        <button id="sideBtn" title="鏡頭轉到側面 θ=90°(第二視角)">🎥 側面</button>
         <button id="solveToggle" title="顯示/隱藏關節目標點">🎯 點關節對位</button>
         <button id="solveReset" title="目標點貼回骨架現況">↺ 重設目標</button>
         <button id="solveRun" title="反求 active key 的關節角度">▶ Solve 反求</button>
+      </div>
+      <div class="ref-row" id="solveViewRow" style="margin-top:6px; border-top:1px dashed var(--line); padding-top:8px">
+        <span style="color:var(--lime); font-size:9px; letter-spacing:.5px; width:100%">多視角三角測量(治景深歧義)</span>
+        <button id="captureViewBtn" title="把目前鏡頭角度 + 目標點存成一個視角">📸 存成視角</button>
+        <button id="clearViewsBtn" title="清空所有已存視角">🗑 清空</button>
+        <div id="solveViewBar" style="display:flex; gap:4px; flex-wrap:wrap; width:100%; margin-top:4px"></div>
       </div>
       <div class="ref-row" style="margin-top:2px">
         <span id="solveReadout" style="font-family:var(--mono); font-size:9.5px; color:var(--dim); line-height:1.5">空心圈=目標(拖到參考圖關節)· 綠點=骨架現況 · 雙擊圈=排除遮擋關節 · Solve 寫入「目前 key」</span>
@@ -1955,7 +1962,7 @@ SOLVE_JOINTS.forEach(j=>{
     if(e.button!==0) return; dragging=true; px=e.clientX; py=e.clientY; t.setPointerCapture(e.pointerId); t.classList.add('on'); });
   t.addEventListener('pointermove',e=>{ if(!dragging)return; const st=solveTargets[j.id];
     st.x+=e.clientX-px; st.y+=e.clientY-py; px=e.clientX; py=e.clientY; placeTgt(j.id); });
-  const end=()=>{ if(dragging){dragging=false; t.classList.remove('on');} };
+  const end=()=>{ if(dragging){dragging=false; t.classList.remove('on'); if(typeof saveActiveView==='function') saveActiveView();} };
   t.addEventListener('pointerup',end); t.addEventListener('pointercancel',end);
   const toggle=e=>{ e.preventDefault(); const st=solveTargets[j.id]; st.enabled=!st.enabled; t.classList.toggle('off',!st.enabled); };
   t.addEventListener('dblclick',toggle); t.addEventListener('contextmenu',toggle);
@@ -1968,30 +1975,106 @@ function snapTargetsToRig(){ syncCam(); SOLVE_JOINTS.forEach(j=>{ const p=projPx
   if(p){ st.x=p[0]; st.y=p[1]; } st.enabled=true; placeTgt(j.id); stgtEls[j.id].classList.remove('off'); }); }
 function updateSolveLayer(){ SOLVE_JOINTS.forEach(j=>{ const p=projPx(j.obj()); const el=srigEls[j.id];
   if(!p){ el.style.display='none'; return; } el.style.display='block'; el.style.left=p[0]+'px'; el.style.top=p[1]+'px'; }); }
-function solveResidual(){ let s=0,n=0; SOLVE_JOINTS.forEach(j=>{ const st=solveTargets[j.id]; if(!st.enabled)return;
-  const p=projPx(j.obj()); if(!p)return; s+=Math.hypot(p[0]-st.x,p[1]-st.y); n++; }); return n?s/n:0; }
-function solveErr(wp,p0,lam){ applyPose(wp);
-  let e=0; SOLVE_JOINTS.forEach(j=>{ const st=solveTargets[j.id]; if(!st.enabled)return;
-    const p=projPx(j.obj()); if(!p)return; e+=(p[0]-st.x)**2+(p[1]-st.y)**2; });
+// ===== Multi-view solve(三角測量地基)=====
+// 存多個鏡頭(cam 參數)+ 各自的 2D 目標點。solver 同時最小化「所有視角」的重投影誤差,
+// 只要有第二個(側)視角,就能鎖死單視角解不出的前後深度(twist / lunge)。
+// 無任何已存視角時,自動退化為「目前鏡頭」單一視角 = 舊行為。
+let SOLVE_VIEWS = [];      // [{name, cam:{theta,phi,radius}, targets:{id:{x,y,enabled}}}]
+let activeViewIdx = -1;    // 目前載入到 solveTargets 的視角索引(-1 = 尚未存/即興)
+const SOLVEVIEW_KEY = 'PUNCH_STUDIO_SOLVEVIEWS_V1';
+
+function curCam(){ return {theta, phi, radius}; }
+function setCam(c){ theta=c.theta; phi=c.phi; radius=c.radius; placeCam(); }
+function sideView(){ theta=Math.PI/2; phi=Math.PI/2; radius=6.0; placeCam(); syncCam(); snapTargetsToRig();
+  setReadout('側視角(θ=90°):把目標點拖到「側面參考圖」的關節,再按「📸 存成視角」。≥2 視角到齊 → Solve 解出深度。'); }
+function cloneTargets(src){ const o={}; SOLVE_JOINTS.forEach(j=>{ const s=src[j.id]||{x:0,y:0,enabled:true};
+  o[j.id]={x:s.x, y:s.y, enabled:s.enabled!==false}; }); return o; }
+
+function saveSolveViews(){ try{ localStorage.setItem(SOLVEVIEW_KEY, JSON.stringify(SOLVE_VIEWS)); }catch(e){} }
+function loadSolveViews(){ try{ const r=localStorage.getItem(SOLVEVIEW_KEY); SOLVE_VIEWS = r ? (JSON.parse(r)||[]) : []; }catch(e){ SOLVE_VIEWS=[]; } }
+
+function captureView(){
+  if(!solveMode){ setReadout('先按「🎯 點關節對位」進入對位模式'); return; }
+  if(activeViewIdx>=0) saveActiveView();
+  const name='V'+(SOLVE_VIEWS.length+1);
+  SOLVE_VIEWS.push({name, cam:curCam(), targets:cloneTargets(solveTargets)});
+  activeViewIdx=SOLVE_VIEWS.length-1;
+  saveSolveViews(); renderViewBar();
+  setReadout('已存「'+name+'」('+SOLVE_VIEWS.length+' 個視角)。'+(SOLVE_VIEWS.length<2
+    ? '換鏡頭角度(🎥 側面)、重貼目標點後再存第二個,Solve 才解得出深度。'
+    : '已 ≥2 視角 → 按「▶ Solve 反求」即可三角測量解深度。'));
+}
+function saveActiveView(){
+  const v=SOLVE_VIEWS[activeViewIdx]; if(!v) return;
+  v.cam=curCam(); v.targets=cloneTargets(solveTargets); saveSolveViews();
+}
+function loadView(idx){
+  const v=SOLVE_VIEWS[idx]; if(!v) return;
+  activeViewIdx=idx; setCam(v.cam); syncCam();
+  SOLVE_JOINTS.forEach(j=>{ const s=v.targets[j.id]||{x:0,y:0,enabled:true}; const st=solveTargets[j.id];
+    st.x=s.x; st.y=s.y; st.enabled=s.enabled!==false; placeTgt(j.id); stgtEls[j.id].classList.toggle('off',!st.enabled); });
+  renderViewBar();
+  setReadout('載入「'+v.name+'」。微調目標點會自動存回此視角;點其他 chip 可切換視角。');
+}
+function deleteView(idx){
+  SOLVE_VIEWS.splice(idx,1);
+  if(activeViewIdx>=SOLVE_VIEWS.length) activeViewIdx=SOLVE_VIEWS.length-1;
+  saveSolveViews(); renderViewBar();
+  setReadout(SOLVE_VIEWS.length?('剩 '+SOLVE_VIEWS.length+' 個視角'):'已無視角,Solve 將以目前鏡頭單視角求解');
+}
+function clearViews(){ SOLVE_VIEWS=[]; activeViewIdx=-1; saveSolveViews(); renderViewBar(); setReadout('已清空所有視角。'); }
+function renderViewBar(){
+  const bar=document.getElementById('solveViewBar'); if(!bar) return;
+  bar.innerHTML='';
+  if(!SOLVE_VIEWS.length){ const s=document.createElement('span');
+    s.style.cssText='color:var(--dim);font-size:9px'; s.textContent='尚無視角 — 擺好鏡頭+目標點後按「📸 存成視角」'; bar.appendChild(s); return; }
+  SOLVE_VIEWS.forEach((v,i)=>{
+    const chip=document.createElement('button');
+    chip.textContent=v.name+(i===activeViewIdx?' ●':''); chip.className=(i===activeViewIdx?'on':'');
+    chip.title='點:載入此視角 · 右鍵/雙擊:刪除';
+    chip.addEventListener('click',()=>{ if(activeViewIdx>=0&&activeViewIdx!==i) saveActiveView(); loadView(i); });
+    const del=e=>{ e.preventDefault(); deleteView(i); };
+    chip.addEventListener('contextmenu',del); chip.addEventListener('dblclick',del);
+    bar.appendChild(chip);
+  });
+}
+
+// solver:跨所有視角累加重投影誤差(無視角→退化為單一「目前鏡頭」視角)
+function gatherViews(){
+  if(activeViewIdx>=0) saveActiveView();
+  return SOLVE_VIEWS.length ? SOLVE_VIEWS : [{name:'(current)', cam:curCam(), targets:solveTargets}];
+}
+function viewsEnabledCount(views){ let n=0;
+  views.forEach(v=>SOLVE_JOINTS.forEach(j=>{ const st=v.targets[j.id]; if(st&&st.enabled) n++; })); return n; }
+function solveResidualMV(views){ let s=0,n=0;
+  views.forEach(v=>{ setCam(v.cam); syncCam();
+    SOLVE_JOINTS.forEach(j=>{ const st=v.targets[j.id]; if(!st||!st.enabled)return;
+      const p=projPx(j.obj()); if(!p)return; s+=Math.hypot(p[0]-st.x,p[1]-st.y); n++; }); });
+  return n?s/n:0; }
+function solveErrMV(wp,p0,lam,views){ applyPose(wp); let e=0;
+  views.forEach(v=>{ setCam(v.cam); syncCam();
+    SOLVE_JOINTS.forEach(j=>{ const st=v.targets[j.id]; if(!st||!st.enabled)return;
+      const p=projPx(j.obj()); if(!p)return; e+=(p[0]-st.x)**2+(p[1]-st.y)**2; }); });
   if(lam) SOLVE_PARAMS.forEach(k=>{ const d=(wp[k]||0)-(p0[k]||0); e+=lam*d*d; });
   return e; }
 function runSolve(){
-  const enabled=SOLVE_JOINTS.filter(j=>solveTargets[j.id].enabled).length;
-  if(enabled<2){ setReadout('至少要 2 個啟用的目標關節才能解'); return; }
+  const views=gatherViews();
+  const enabled=viewsEnabledCount(views);
+  if(enabled<2){ setReadout('至少要 2 個啟用的目標(跨視角合計)才能解'); return; }
   if(playing){ playing=false; if(typeof updateUI==='function') updateUI(); }
   scrubActive=false; pushHistory();
-  syncCam();
+  const restoreCam=(activeViewIdx>=0 && SOLVE_VIEWS[activeViewIdx]) ? {...SOLVE_VIEWS[activeViewIdx].cam} : curCam();
   const base=PHASES[activePhase]; const wp={...base}, p0={...base}; const lam=0.04;
-  const before=solveResidual();
+  const before=solveResidualMV(views);
   const step={}; SOLVE_PARAMS.forEach(k=>step[k]=10);
-  let cur=solveErr(wp,p0,lam);
+  let cur=solveErrMV(wp,p0,lam,views);
   for(let sweep=0; sweep<48; sweep++){
     let improved=false;
     for(const k of SOLVE_PARAMS){
       const rg=KEYRANGE[k]||[-180,180];
       for(const dir of [1,-1]){
         const old=wp[k]||0; let nv=Math.max(rg[0],Math.min(rg[1],old+dir*step[k]));
-        if(nv===old) continue; wp[k]=nv; const e=solveErr(wp,p0,lam);
+        if(nv===old) continue; wp[k]=nv; const e=solveErrMV(wp,p0,lam,views);
         if(e<cur-1e-6){ cur=e; improved=true; } else { wp[k]=old; }
       }
     }
@@ -2000,8 +2083,10 @@ function runSolve(){
   SOLVE_PARAMS.forEach(k=>{ const rg=KEYRANGE[k]; let v=wp[k]; if(rg) v=Math.max(rg[0],Math.min(rg[1],v)); base[k]=Math.round(v*10)/10; });
   applyPose(base); if(typeof refreshSliders==='function') refreshSliders();
   if(typeof scheduleAutosave==='function') scheduleAutosave();
-  const after=solveResidual();
-  setReadout('殘差 '+before.toFixed(1)+'px → '+after.toFixed(1)+'px　·　已寫入 key「'+activePhase+'」('+enabled+' 關節)');
+  setCam(restoreCam); syncCam(); updateSolveLayer();
+  const after=solveResidualMV(views);
+  const depth = views.length>=2 ? ('多視角('+views.length+')→ 深度可解') : '單視角 → 深度沿用現值';
+  setReadout('殘差 '+before.toFixed(1)+'px → '+after.toFixed(1)+'px　·　'+depth+'　·　寫入 key「'+activePhase+'」('+enabled+' 點)');
 }
 function setReadout(t){ const el=document.getElementById('solveReadout'); if(el) el.textContent=t; }
 function frontView(){ theta=0; phi=Math.PI/2; radius=6.0; placeCam(); syncCam(); }
@@ -2010,13 +2095,19 @@ function setSolveMode(on){
   document.getElementById('solveToggle').classList.toggle('on',on);
   solveLayer.style.display=on?'block':'none';
   if(on){ if(playing){ playing=false; if(typeof updateUI==='function') updateUI(); } scrubActive=false;
-    frontView(); snapTargetsToRig();
-    setReadout('拖空心圈到參考圖關節 → 按 Solve。深度軸(前後)單視角解不出,會沿用你目前的值,第二步加側視再補。'); }
+    if(SOLVE_VIEWS.length && activeViewIdx>=0){ loadView(activeViewIdx); }
+    else { frontView(); snapTargetsToRig(); }
+    renderViewBar();
+    setReadout('正面=第一視角。拖目標點對齊參考圖 →「📸 存成視角」;再切「🎥 側面」貼第二視角。≥2 視角 Solve 即可解出深度。'); }
 }
 document.getElementById('frontBtn').addEventListener('click',frontView);
 document.getElementById('solveToggle').addEventListener('click',()=>setSolveMode(!solveMode));
 document.getElementById('solveReset').addEventListener('click',()=>{ if(!solveMode) setSolveMode(true); else snapTargetsToRig(); });
 document.getElementById('solveRun').addEventListener('click',()=>{ if(!solveMode){ setSolveMode(true); return; } runSolve(); });
+document.getElementById('sideBtn').addEventListener('click',()=>{ if(!solveMode) setSolveMode(true); sideView(); });
+document.getElementById('captureViewBtn').addEventListener('click',captureView);
+document.getElementById('clearViewsBtn').addEventListener('click',clearViews);
+loadSolveViews(); if(SOLVE_VIEWS.length) activeViewIdx=0; renderViewBar();
 
 
 // ===== 時間軸 scrub ===== 凍結在任一 in-between 幀觀察弧線(只讀,不改 pose)
