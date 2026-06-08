@@ -332,7 +332,7 @@ const D2R = Math.PI/180;
 const REF_FPS = 60;
 
 // ===== Pose data model =====
-// 31+5=36 軸 / phase(根 7:含 squat 巨集 + 脊椎 2 + 頭 3 + 雙手 10 + 雙腿 14)
+// 41 軸 / phase(根 7:含 squat 巨集 + 脊椎 3 + 頭 3 + 雙手 12 + 雙腿 16:含雙腳接觸鎖)
 // scale 軸:1=原大小、>1=放大(GetAmped 風攻擊命中放大)、<1=縮小(攻擊時身體縮)
 const POSE_KEYS = [
   'root_y','root_x','root_py','root_pz','sq','body_scale','squat',
@@ -341,7 +341,8 @@ const POSE_KEYS = [
   'aL_sx','aL_sy','aL_sz','aL_ex','aL_idle','aL_scale',
   'aR_sx','aR_sy','aR_sz','aR_ex','aR_idle','aR_scale',
   'lL_hx','lL_hy','lL_hz','lL_kx','lL_ax','lL_idle','lL_scale',
-  'lR_hx','lR_hy','lR_hz','lR_kx','lR_ax','lR_idle','lR_scale'
+  'lR_hx','lR_hy','lR_hz','lR_kx','lR_ax','lR_idle','lR_scale',
+  'lL_contact','lR_contact'   // 腳掌接觸鎖:0=平踩 1=墊腳(抬跟) 2=抬起(離地,不當地面錨點)
 ];
 function defaultPoseValue(k){
   // 所有 scale 類型預設必須是 1；重置/匯入/匯出都走這個函式，避免資料變 0。
@@ -699,7 +700,8 @@ const SLIDER_GROUPS = [
     ['lL_kx', '膝(0=直 / 90=蹲)', -20, 90, 1, '°'],
     ['lL_ax', '腳踝微調(自動壓平外的額外)', -60, 60, 1, '°'],
     ['lL_idle', '→ IDLE 比例(1=強制直立)', 0, 1, 0.01, ''],
-    ['lL_scale', '小腿/腳掌縮放(命中放大)', 0.5, 2.5, 0.01, '×']
+    ['lL_scale', '小腿/腳掌縮放(命中放大)', 0.5, 2.5, 0.01, '×'],
+    ['lL_contact', '接觸鎖(0=平踩 1=墊腳 2=抬起)', 0, 2, 1, '']
   ]},
   {h:'右腿 LEG R(後腿)', cls:'legs', keys:[
     ['lR_hx', '髖 X(前後擺)', -60, 60, 1, '°'],
@@ -708,7 +710,8 @@ const SLIDER_GROUPS = [
     ['lR_kx', '膝(0=直 / 90=蹲)', -20, 90, 1, '°'],
     ['lR_ax', '腳踝微調(自動壓平外的額外)', -60, 60, 1, '°'],
     ['lR_idle', '→ IDLE 比例(1=強制直立)', 0, 1, 0.01, ''],
-    ['lR_scale', '小腿/腳掌縮放(命中放大)', 0.5, 2.5, 0.01, '×']
+    ['lR_scale', '小腿/腳掌縮放(命中放大)', 0.5, 2.5, 0.01, '×'],
+    ['lR_contact', '接觸鎖(0=平踩 1=墊腳 2=抬起)', 0, 2, 1, '']
   ]}
 ];
 
@@ -816,7 +819,7 @@ const DIM_DEFAULTS = Object.assign({}, DIM);
 
 
 // ===== State safety: JSON save/load, undo/redo, autosave =====
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 const STORAGE_KEY = 'PUNCH_STUDIO_AUTOSAVE_V2';
 let UNDO_STACK = [];
 let REDO_STACK = [];
@@ -1055,6 +1058,11 @@ function applyPose(p){
   // 腳踝:自動把腳掌壓平(用蹲下後的有效角度),ax 為額外手動微調
   legL.ankle.rotation.x = (-(hxL + kxL) + (p.lL_ax||0)) * lLw * D2R;
   legR.ankle.rotation.x = (-(hxR + kxR) + (p.lR_ax||0)) * lRw * D2R;
+  // 腳掌接觸鎖:0=平踩 1=墊腳(抬跟,以腳尖為支點) 2=抬起(離地)
+  const cL = Math.round(p.lL_contact||0), cR = Math.round(p.lR_contact||0);
+  const HEEL_LIFT = 55*D2R;   // 墊腳抬跟量(正 ankle.x = 趾下、跟上)
+  if(cL===1) legL.ankle.rotation.x += HEEL_LIFT*lLw;
+  if(cR===1) legR.ankle.rotation.x += HEEL_LIFT*lRw;
   // 前臂/小腿縮放(命中放大,chibi 浮誇)
   armL.lm.scale.setScalar(p.aL_scale||1);
   armR.lm.scale.setScalar(p.aR_scale||1);
@@ -1065,11 +1073,14 @@ function applyPose(p){
   armR.fist.scale.setScalar(p.aR_scale||1);
   legL.foot.scale.setScalar(p.lL_scale||1);
   legR.foot.scale.setScalar(p.lR_scale||1);
-  // 自動踩地:擺完姿勢後把雙腳最低點鎖到 Y=0(站穩地面);root_py 作為額外升降(跳躍/浮空)
+  // 自動踩地(接觸鎖):只用「踩地中」的腳(平踩/墊腳)當地面錨點 → 重心落在支撐腳;
+  // 抬起(2)的腳不算錨點,可自由離地不會把身體拉下來。root_py 作為額外升降(跳躍/浮空)。
   root.updateMatrixWorld(true);
   _footBox.makeEmpty();
-  _footBox.expandByObject(legL.foot);
-  _footBox.expandByObject(legR.foot);
+  let grounded=false;
+  if(cL!==2){ _footBox.expandByObject(legL.foot); grounded=true; }
+  if(cR!==2){ _footBox.expandByObject(legR.foot); grounded=true; }
+  if(!grounded){ _footBox.expandByObject(legL.foot); _footBox.expandByObject(legR.foot); }   // 雙腳皆抬:仍用雙腳防止飄走
   root.position.y = isFinite(_footBox.min.y) ? (baseY - _footBox.min.y + (p.root_py||0)) : (baseY + (p.root_py||0));
 }
 

@@ -4,7 +4,7 @@
 >
 > **定位**：目前「先自用」服務 Mastery PD，但格式刻意設計成**引擎中立**，保留未來外推成獨立工具的可能。
 >
-> **狀態**：`version: 2`（對應 PUNCH STUDIO 的 `STATE_VERSION = 2`）。
+> **狀態**：`version: 3`（對應 PUNCH STUDIO 的 `STATE_VERSION = 3`）。
 
 ---
 
@@ -18,7 +18,7 @@
    才能滿足 Mastery PD 的 lockstep PvP。詳見 §6。
 3. **`poseKeys` 是權威軸列表**
    消費端**應讀取檔案內的 `poseKeys` 陣列**來決定軸的順序與數量，
-   **不要** hardcode（v2 為 39 軸；舊註解寫「36」已過時，以 `poseKeys.length` 為準）。
+   **不要** hardcode（v3 為 41 軸；v2 為 39 軸，以 `poseKeys.length` 為準）。
 4. **向前相容**：未知欄位應被忽略而非報錯；缺漏欄位以預設值補齊（見各節）。
 
 ---
@@ -29,7 +29,7 @@
 {
   "version": 2,                 // 格式版本（整數）。消費端必須檢查。
   "createdBy": "PUNCH STUDIO",  // 產生者標記（資訊用途）
-  "poseKeys": [ "root_y", ... ],// 權威軸名陣列（v2 = 39 軸，順序固定，見 §3）
+  "poseKeys": [ "root_y", ... ],// 權威軸名陣列（v3 = 41 軸，順序固定，見 §3）
   "seq":    [ /* TimelineKey */ ],  // 有序時間軸（= 格鬥 frame data），見 §4
   "phases": { "<keyName>": { /* Pose */ } }, // 每個 key 一組 pose，見 §3
   "lags":   { "aL":0, "aR":0.2, "lL":0, "lR":0.1 }, // per-limb 鞭打延遲，見 §5
@@ -48,7 +48,7 @@
 **scale 類軸（`body_scale`、任何 `*_scale`）預設為 `1`；其餘預設 `0`。**
 缺漏軸由消費端補預設值。
 
-### v2 的 39 條軸（順序 = `poseKeys`）
+### v3 的 41 條軸（順序 = `poseKeys`）
 
 | 群組 | 軸 | 說明 | 範圍 | 單位 |
 |------|----|------|------|------|
@@ -79,10 +79,18 @@
 | | `lL_ax` | 腳踝微調 | −60…60 | ° |
 | | `lL_idle` | → IDLE 比例（1=強制直立） | 0…1 | — |
 | | `lL_scale` | 小腿/腳掌縮放 | 0.5…2.5 | × |
-| **LEG R**（後腿） | `lR_hx` `lR_hy` `lR_hz` `lR_kx` `lR_ax` `lR_idle` `lR_scale` | 同 LEG L | 同上 | |
+| | `lL_contact` | 腳掌接觸鎖（0=平踩 / 1=墊腳抬跟 / 2=抬起離地） | 0 / 1 / 2 | enum |
+| **LEG R**（後腿） | `lR_hx` `lR_hy` `lR_hz` `lR_kx` `lR_ax` `lR_idle` `lR_scale` `lR_contact` | 同 LEG L | 同上 | |
 
 > 範圍為編輯器 slider 的軟限制；消費端**建議**依此 clamp 作為合法性檢查（也可當關節角度上限，輔助 §「景深歧義」的 Solve 約束）。
-> 單位：`°`=度，`u`=世界單位（相對 `dim`），`×`=倍率。
+> 單位：`°`=度，`u`=世界單位（相對 `dim`），`×`=倍率，`enum`=離散整數。
+>
+> **腳掌接觸鎖（`lL_contact` / `lR_contact`，v3 新增）**：定義該腳與地面的接觸狀態，消費端據此決定「踩地」與「重心」。
+> - `0 平踩`：整個腳掌貼地，當地面錨點。
+> - `1 墊腳`：抬腳跟、以腳尖為支點（拳擊後腳碾地/重心轉移），仍當地面錨點（錨在腳尖）。
+> - `2 抬起`：腳離地，**不**當地面錨點 → 身體高度由另一支撐腳決定（重心落在支撐腳）。
+> 規則：角色的垂直高度 = 把「所有非抬起腳」的最低接觸點對到地面 Y=0（再加 `root_py` 升降）。
+> 雙腳皆抬起時退化為「雙腳最低點」以免角色飄走。
 
 ---
 
@@ -171,7 +179,8 @@ pose 的角度軸可沿用，`*_py/*_pz/*_scale` 等位置/倍率軸需依 `dim`
 ### 版本歷史
 | version | 變更 |
 |---------|------|
-| 2 | 目前格式：39 軸、有序 `seq`（含 `frame`/`returnFrames`）、`lags`、`dim`。|
+| 3 | 目前格式：**41 軸**，新增 `lL_contact` / `lR_contact`（腳掌接觸鎖，治墊腳/重心）。遷移：v2→v3 缺的接觸軸補預設 `0`（平踩），行為與舊版一致。|
+| 2 | 39 軸、有序 `seq`（含 `frame`/`returnFrames`）、`lags`、`dim`。|
 | 1 | （PUNCH STUDIO 早期；舊「Godot text」與勾選覆寫格式，已不建議。）|
 
 ---
@@ -180,14 +189,15 @@ pose 的角度軸可沿用，`*_py/*_pz/*_scale` 等位置/倍率軸需依 `dim`
 
 ```jsonc
 {
-  "version": 2,
+  "version": 3,
   "createdBy": "PUNCH STUDIO",
   "poseKeys": ["root_y","root_x","root_py","root_pz","sq","body_scale","squat",
     "spine_x","spine_y","pelvis_y","head_y","head_x","head_pz",
     "aL_sx","aL_sy","aL_sz","aL_ex","aL_idle","aL_scale",
     "aR_sx","aR_sy","aR_sz","aR_ex","aR_idle","aR_scale",
     "lL_hx","lL_hy","lL_hz","lL_kx","lL_ax","lL_idle","lL_scale",
-    "lR_hx","lR_hy","lR_hz","lR_kx","lR_ax","lR_idle","lR_scale"],
+    "lR_hx","lR_hy","lR_hz","lR_kx","lR_ax","lR_idle","lR_scale",
+    "lL_contact","lR_contact"],
   "seq": [
     { "name":"idle",   "frame":0,  "ease":"out", "impact":false, "tag":"idle",   "returnFrames":10 },
     { "name":"anti",   "frame":7,  "ease":"out", "impact":false, "tag":"anti"   },
