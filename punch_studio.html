@@ -247,7 +247,8 @@
       </div>
       <div class="ref-row" id="solveViewRow" style="margin-top:6px; border-top:1px dashed var(--line); padding-top:8px">
         <span style="color:var(--lime); font-size:9px; letter-spacing:.5px; width:100%">多視角三角測量(治景深歧義)</span>
-        <button id="captureViewBtn" title="把目前鏡頭角度 + 目標點存成一個視角">📸 存成視角</button>
+        <button id="captureViewBtn" title="把目前鏡頭 + 目標點 + 參考圖存成「新」視角">📸 存成視角</button>
+        <button id="updateViewBtn" title="用目前狀態覆寫「作用中」視角">💾 更新</button>
         <button id="clearViewsBtn" title="清空所有已存視角">🗑 清空</button>
         <div id="solveViewBar" style="display:flex; gap:4px; flex-wrap:wrap; width:100%; margin-top:4px"></div>
       </div>
@@ -1899,24 +1900,46 @@ window.addEventListener('resize',resize); resize();
 // ===== 參考疊圖(onion-skin)===== 純視覺輔助,完全不碰 pose schema
 const refImg=document.getElementById('refImg');
 const refState={x:0,y:0,scale:1,flip:false,opacity:0.5};
-let refUrl=null;
+let refSrc=null;   // 目前參考圖(data URL,可序列化 → 綁進 view / 存 localStorage)
 let refAlignOn=false, refDrag=false, _rpx=0,_rpy=0;
 function applyRef(){
   refImg.style.opacity=refState.opacity;
   const sx=refState.scale*(refState.flip?-1:1);
   refImg.style.transform='translate('+refState.x+'px,'+refState.y+'px) scale('+sx+','+refState.scale+')';
 }
+function setRefUI(){
+  document.getElementById('r_refop').value=refState.opacity;
+  document.getElementById('v_refop').textContent=refState.opacity.toFixed(2);
+  document.getElementById('refFlip').classList.toggle('on',refState.flip);
+}
+// 目前參考圖 → 可存物件(綁進 view);無圖回 null
+function curRef(){ return refSrc ? {src:refSrc, x:refState.x, y:refState.y, scale:refState.scale, flip:refState.flip, opacity:refState.opacity} : null; }
+// 把某 view 的參考圖套上畫面(切換視角時呼叫)
+function showRef(ref){
+  if(ref && ref.src){
+    refSrc=ref.src; refImg.src=ref.src; refImg.style.display='block';
+    refState.x=ref.x||0; refState.y=ref.y||0; refState.scale=ref.scale||1; refState.flip=!!ref.flip;
+    if(ref.opacity!=null) refState.opacity=ref.opacity;
+  } else {
+    refSrc=null; refImg.removeAttribute('src'); refImg.style.display='none';
+    refState.x=0; refState.y=0; refState.scale=1; refState.flip=false;
+  }
+  setRefUI(); applyRef();
+}
 document.getElementById('refFile').addEventListener('change',e=>{
   const f=e.target.files&&e.target.files[0]; if(!f)return;
-  if(refUrl) URL.revokeObjectURL(refUrl);
-  refUrl=URL.createObjectURL(f);
-  refImg.src=refUrl; refImg.style.display='block';
-  if(refState.opacity<0.05){refState.opacity=0.5; document.getElementById('r_refop').value=0.5; document.getElementById('v_refop').textContent='0.50';}
-  applyRef();
+  const rd=new FileReader();
+  rd.onload=()=>{
+    refSrc=rd.result; refImg.src=refSrc; refImg.style.display='block';
+    if(refState.opacity<0.05) refState.opacity=0.5;
+    setRefUI(); applyRef();
+  };
+  rd.readAsDataURL(f);
+  e.target.value='';   // 允許重新載入同一個檔案
 });
 document.getElementById('r_refop').addEventListener('input',e=>{ refState.opacity=parseFloat(e.target.value); document.getElementById('v_refop').textContent=refState.opacity.toFixed(2); applyRef(); });
 document.getElementById('refFlip').addEventListener('click',e=>{ refState.flip=!refState.flip; e.target.classList.toggle('on',refState.flip); applyRef(); });
-document.getElementById('refClear').addEventListener('click',()=>{ if(refUrl){ URL.revokeObjectURL(refUrl); refUrl=null; } refImg.removeAttribute('src'); refImg.style.display='none'; refState.x=0; refState.y=0; refState.scale=1; refState.flip=false; document.getElementById('refFlip').classList.remove('on'); applyRef(); });
+document.getElementById('refClear').addEventListener('click',()=>{ refSrc=null; refImg.removeAttribute('src'); refImg.style.display='none'; refState.x=0; refState.y=0; refState.scale=1; refState.flip=false; document.getElementById('refFlip').classList.remove('on'); applyRef(); });
 document.getElementById('refAlign').addEventListener('click',e=>{ refAlignOn=!refAlignOn; e.target.classList.toggle('on',refAlignOn); refImg.classList.toggle('align',refAlignOn); });
 refImg.addEventListener('pointerdown',e=>{ if(!refAlignOn)return; refDrag=true; _rpx=e.clientX; _rpy=e.clientY; refImg.setPointerCapture(e.pointerId); });
 refImg.addEventListener('pointermove',e=>{ if(!refDrag)return; refState.x+=e.clientX-_rpx; refState.y+=e.clientY-_rpy; _rpx=e.clientX; _rpy=e.clientY; applyRef(); });
@@ -1962,7 +1985,7 @@ SOLVE_JOINTS.forEach(j=>{
     if(e.button!==0) return; dragging=true; px=e.clientX; py=e.clientY; t.setPointerCapture(e.pointerId); t.classList.add('on'); });
   t.addEventListener('pointermove',e=>{ if(!dragging)return; const st=solveTargets[j.id];
     st.x+=e.clientX-px; st.y+=e.clientY-py; px=e.clientX; py=e.clientY; placeTgt(j.id); });
-  const end=()=>{ if(dragging){dragging=false; t.classList.remove('on'); if(typeof saveActiveView==='function') saveActiveView();} };
+  const end=()=>{ if(dragging){dragging=false; t.classList.remove('on');} };
   t.addEventListener('pointerup',end); t.addEventListener('pointercancel',end);
   const toggle=e=>{ e.preventDefault(); const st=solveTargets[j.id]; st.enabled=!st.enabled; t.classList.toggle('off',!st.enabled); };
   t.addEventListener('dblclick',toggle); t.addEventListener('contextmenu',toggle);
@@ -1990,14 +2013,20 @@ function sideView(){ theta=Math.PI/2; phi=Math.PI/2; radius=6.0; placeCam(); syn
 function cloneTargets(src){ const o={}; SOLVE_JOINTS.forEach(j=>{ const s=src[j.id]||{x:0,y:0,enabled:true};
   o[j.id]={x:s.x, y:s.y, enabled:s.enabled!==false}; }); return o; }
 
-function saveSolveViews(){ try{ localStorage.setItem(SOLVEVIEW_KEY, JSON.stringify(SOLVE_VIEWS)); }catch(e){} }
+function saveSolveViews(){
+  try{ localStorage.setItem(SOLVEVIEW_KEY, JSON.stringify(SOLVE_VIEWS)); }
+  catch(e){
+    // 多半是 localStorage 配額超過(參考圖 data URL 太大)→ 退而求其次:只存幾何,不存圖
+    try{ localStorage.setItem(SOLVEVIEW_KEY, JSON.stringify(
+      SOLVE_VIEWS.map(v=>({...v, ref: v.ref ? {...v.ref, src:null} : null})))); }catch(_){}
+  }
+}
 function loadSolveViews(){ try{ const r=localStorage.getItem(SOLVEVIEW_KEY); SOLVE_VIEWS = r ? (JSON.parse(r)||[]) : []; }catch(e){ SOLVE_VIEWS=[]; } }
 
 function captureView(){
   if(!solveMode){ setReadout('先按「🎯 點關節對位」進入對位模式'); return; }
-  if(activeViewIdx>=0) saveActiveView();
   const name='V'+(SOLVE_VIEWS.length+1);
-  SOLVE_VIEWS.push({name, cam:curCam(), targets:cloneTargets(solveTargets)});
+  SOLVE_VIEWS.push({name, cam:curCam(), targets:cloneTargets(solveTargets), ref:curRef()});
   activeViewIdx=SOLVE_VIEWS.length-1;
   saveSolveViews(); renderViewBar();
   setReadout('已存「'+name+'」('+SOLVE_VIEWS.length+' 個視角)。'+(SOLVE_VIEWS.length<2
@@ -2006,15 +2035,21 @@ function captureView(){
 }
 function saveActiveView(){
   const v=SOLVE_VIEWS[activeViewIdx]; if(!v) return;
-  v.cam=curCam(); v.targets=cloneTargets(solveTargets); saveSolveViews();
+  v.cam=curCam(); v.targets=cloneTargets(solveTargets); v.ref=curRef(); saveSolveViews();
+}
+function updateActiveView(){
+  if(activeViewIdx<0 || !SOLVE_VIEWS[activeViewIdx]){ setReadout('沒有作用中的視角可更新 — 先點一個視角 chip,或按「📸 存成視角」新增'); return; }
+  saveActiveView();
+  setReadout('已更新「'+SOLVE_VIEWS[activeViewIdx].name+'」(鏡頭 + 目標點 + 參考圖)');
 }
 function loadView(idx){
   const v=SOLVE_VIEWS[idx]; if(!v) return;
   activeViewIdx=idx; setCam(v.cam); syncCam();
   SOLVE_JOINTS.forEach(j=>{ const s=v.targets[j.id]||{x:0,y:0,enabled:true}; const st=solveTargets[j.id];
     st.x=s.x; st.y=s.y; st.enabled=s.enabled!==false; placeTgt(j.id); stgtEls[j.id].classList.toggle('off',!st.enabled); });
+  showRef(v.ref);
   renderViewBar();
-  setReadout('載入「'+v.name+'」。微調目標點會自動存回此視角;點其他 chip 可切換視角。');
+  setReadout('載入「'+v.name+'」(含專屬參考圖)。調整後按「💾 更新」存回此視角;或「📸 存成視角」另存新的。');
 }
 function deleteView(idx){
   SOLVE_VIEWS.splice(idx,1);
@@ -2032,7 +2067,7 @@ function renderViewBar(){
     const chip=document.createElement('button');
     chip.textContent=v.name+(i===activeViewIdx?' ●':''); chip.className=(i===activeViewIdx?'on':'');
     chip.title='點:載入此視角 · 右鍵/雙擊:刪除';
-    chip.addEventListener('click',()=>{ if(activeViewIdx>=0&&activeViewIdx!==i) saveActiveView(); loadView(i); });
+    chip.addEventListener('click',()=>loadView(i));
     const del=e=>{ e.preventDefault(); deleteView(i); };
     chip.addEventListener('contextmenu',del); chip.addEventListener('dblclick',del);
     bar.appendChild(chip);
@@ -2041,7 +2076,6 @@ function renderViewBar(){
 
 // solver:跨所有視角累加重投影誤差(無視角→退化為單一「目前鏡頭」視角)
 function gatherViews(){
-  if(activeViewIdx>=0) saveActiveView();
   return SOLVE_VIEWS.length ? SOLVE_VIEWS : [{name:'(current)', cam:curCam(), targets:solveTargets}];
 }
 function viewsEnabledCount(views){ let n=0;
@@ -2095,7 +2129,7 @@ function setSolveMode(on){
   document.getElementById('solveToggle').classList.toggle('on',on);
   solveLayer.style.display=on?'block':'none';
   if(on){ if(playing){ playing=false; if(typeof updateUI==='function') updateUI(); } scrubActive=false;
-    if(SOLVE_VIEWS.length && activeViewIdx>=0){ loadView(activeViewIdx); }
+    if(SOLVE_VIEWS.length){ loadView(activeViewIdx>=0?activeViewIdx:0); }
     else { frontView(); snapTargetsToRig(); }
     renderViewBar();
     setReadout('正面=第一視角。拖目標點對齊參考圖 →「📸 存成視角」;再切「🎥 側面」貼第二視角。≥2 視角 Solve 即可解出深度。'); }
@@ -2106,8 +2140,9 @@ document.getElementById('solveReset').addEventListener('click',()=>{ if(!solveMo
 document.getElementById('solveRun').addEventListener('click',()=>{ if(!solveMode){ setSolveMode(true); return; } runSolve(); });
 document.getElementById('sideBtn').addEventListener('click',()=>{ if(!solveMode) setSolveMode(true); sideView(); });
 document.getElementById('captureViewBtn').addEventListener('click',captureView);
+document.getElementById('updateViewBtn').addEventListener('click',updateActiveView);
 document.getElementById('clearViewsBtn').addEventListener('click',clearViews);
-loadSolveViews(); if(SOLVE_VIEWS.length) activeViewIdx=0; renderViewBar();
+loadSolveViews(); renderViewBar();
 
 
 // ===== 時間軸 scrub ===== 凍結在任一 in-between 幀觀察弧線(只讀,不改 pose)
