@@ -1,0 +1,51 @@
+name: Deploy PUNCH STUDIO to GitHub Pages
+
+# 把 punch_studio.html 自動部署成 GitHub Pages,取得 https 網址(到處可開、AI 偵測可用)。
+# 觸發:推上 main(例如合併 PR 後)或在 Actions 頁手動 Run。
+on:
+  push:
+    branches: [main]
+    paths:
+      - punch_studio.html
+      - .github/workflows/deploy-pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時只跑一個部署,新的取代排隊中的舊的
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assemble site (只發佈工具本身)
+        run: |
+          mkdir -p _site
+          # 根網址直接開工具
+          cp punch_studio.html _site/index.html
+          # 保留原檔名路徑(指南/書籤可用)
+          cp punch_studio.html _site/punch_studio.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

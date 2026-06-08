@@ -20,14 +20,25 @@ PUNCH STUDIO（`punch_studio.html`）是一個 **pose-by-pose 招式關鍵幀編
 
 ## 1. 怎麼開（重要）
 
+### 線上版（推薦，到處可用）
+合併到 `main` 後會自動部署成 GitHub Pages：
+
+> **https://pony0278.github.io/docs/**
+
+手機 / 任何裝置開這個 https 網址即可，**AI 偵測也能用**，不用起本機伺服器。
+（首次需做一次性設定，見本檔末「附錄：啟用 GitHub Pages」。）
+
+### 本機版
 ```bash
-# 在 punch_studio.html 所在資料夾
-python -m http.server
-# 瀏覽器開 http://localhost:8000/punch_studio.html
+# 在 punch_studio.html 所在資料夾(擇一)
+python -m http.server          # 有 Python
+npx serve                      # 有 Node
+php -S localhost:8000          # 有 PHP
+# 然後瀏覽器開 http://localhost:8000/punch_studio.html
 ```
 
 > ⚠️ **不要直接雙擊檔案（`file://`）開** —— 那樣「🤖 AI 偵測」的模型會被瀏覽器擋下。
-> 其他功能 `file://` 可用，但 AI 偵測一定要用本機 http。
+> 其他功能 `file://` 可用，但 AI 偵測一定要用本機 http 或上面的線上版。
 
 舞台操作：**滑鼠拖曳＝轉鏡頭**、**滾輪＝縮放**。
 
@@ -123,3 +134,17 @@ python -m http.server
 | Solve 反求 | 由 2D 目標點反推出關節角度 |
 | 接觸鎖 (contact) | 每隻腳與地面的接觸狀態：0 平踩 / 1 墊腳 / 2 抬起 |
 | lag | 四肢相對軀幹的鞭打延遲 |
+
+---
+
+## 附錄：啟用 GitHub Pages（一次性設定）
+
+部署 workflow 在 `.github/workflows/deploy-pages.yml`，但需要做三件事各一次：
+
+1. **把 repo 改 public**：repo → **Settings → General → Danger Zone → Change visibility → Public**。
+   （GitHub 免費方案的 Pages 只支援 public repo。工具本身沒有祕密；你載入的參考圖是瀏覽器本機讀取、不會上傳。）
+2. **開 Pages 來源**：repo → **Settings → Pages → Build and deployment → Source** 選 **GitHub Actions**。
+3. **讓它跑一次**：把這個分支的 PR 合併到 `main`（或到 **Actions** 分頁手動 Run「Deploy PUNCH STUDIO to GitHub Pages」）。
+
+完成後每次 `main` 上的 `punch_studio.html` 有更新，就會自動重新部署到
+**https://pony0278.github.io/docs/** 。
