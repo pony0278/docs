@@ -8,6 +8,7 @@ on:
     paths:
       - punch_studio.html
       - pose_test.html
+      - llm_pose_test.html
       - .github/workflows/deploy-pages.yml
   workflow_dispatch:
 
@@ -40,6 +41,8 @@ jobs:
           cp punch_studio.html _site/punch_studio.html
           # MediaPipe 乾淨測試頁
           cp pose_test.html _site/pose_test.html
+          # LLM 視覺偵測測試頁
+          cp llm_pose_test.html _site/llm_pose_test.html
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
