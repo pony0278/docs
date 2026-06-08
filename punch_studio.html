@@ -171,6 +171,7 @@
       <span style="color:var(--cy)">EDIT:</span> 拖 slider 即時看姿勢 · 點 Timeline key 換編輯目標<br>
       <span style="color:var(--lime)">PLAY:</span> 按下後動畫照 timing 跑完一輪</div>
     <img id="refImg" class="refimg" alt="reference overlay">
+    <video id="refVid" class="refimg" playsinline muted preload="auto"></video>
     <div id="nodeLayer" style="display:none"></div>
     <div id="solveLayer" style="display:none"></div>
     <div id="dragReadout"></div>
@@ -233,6 +234,16 @@
         <button id="refAlign">對齊(拖曳/滾輪)</button>
         <button id="refFlip">水平翻轉</button>
         <button id="refClear">清除</button>
+      </div>
+      <div class="ref-row">
+        <label class="filebtn">📹 載入參考影片<input type="file" id="refVidFile" accept="video/*"></label>
+        <button id="refVidPrev" title="上一幀(約 1/30s)">◀ 幀</button>
+        <button id="refVidNext" title="下一幀(約 1/30s)">幀 ▶</button>
+        <span id="refVidTime" style="font-size:10px;color:var(--dim)">—</span>
+      </div>
+      <div class="ctrl" id="refVidScrubWrap" style="display:none">
+        <div class="lab"><span class="name">影片 scrub(拖到要的那一幀)</span><span class="val" id="refVidLbl">0.00s</span></div>
+        <input type="range" id="refVidScrub" min="0" max="1000" step="1" value="0">
       </div>
       <div class="ctrl">
         <div class="lab"><span class="name">透明度 opacity</span><span class="val" id="v_refop">0.50</span></div>
@@ -1911,52 +1922,102 @@ window.addEventListener('resize',resize); resize();
 
 // ===== 參考疊圖(onion-skin)===== 純視覺輔助,完全不碰 pose schema
 const refImg=document.getElementById('refImg');
+const refVid=document.getElementById('refVid');
 const refState={x:0,y:0,scale:1,flip:false,opacity:0.5};
-let refSrc=null;   // 目前參考圖(data URL,可序列化 → 綁進 view / 存 localStorage)
+let refSrc=null;     // 目前「靜態」參考圖(data URL,可序列化 → 綁進 view)
+let refKind=null;    // null | 'image' | 'video'(影片只供即時 scrub 找幀;存 view 時烘成靜圖)
 let refAlignOn=false, refDrag=false, _rpx=0,_rpy=0;
 function applyRef(){
-  refImg.style.opacity=refState.opacity;
   const sx=refState.scale*(refState.flip?-1:1);
-  refImg.style.transform='translate('+refState.x+'px,'+refState.y+'px) scale('+sx+','+refState.scale+')';
+  const t='translate('+refState.x+'px,'+refState.y+'px) scale('+sx+','+refState.scale+')';
+  [refImg, refVid].forEach(el=>{ if(!el)return; el.style.opacity=refState.opacity; el.style.transform=t; });
 }
 function setRefUI(){
   document.getElementById('r_refop').value=refState.opacity;
   document.getElementById('v_refop').textContent=refState.opacity.toFixed(2);
   document.getElementById('refFlip').classList.toggle('on',refState.flip);
 }
-// 目前參考圖 → 可存物件(綁進 view);無圖回 null
-function curRef(){ return refSrc ? {src:refSrc, x:refState.x, y:refState.y, scale:refState.scale, flip:refState.flip, opacity:refState.opacity} : null; }
-// 把某 view 的參考圖套上畫面(切換視角時呼叫)
+function hideVideo(){
+  if(!refVid) return;
+  try{ refVid.pause(); }catch(e){}
+  refVid.removeAttribute('src'); try{ refVid.load(); }catch(e){}
+  refVid.style.display='none';
+  document.getElementById('refVidScrubWrap').style.display='none';
+  document.getElementById('refVidTime').textContent='—';
+}
+// 目前參考 → 可存物件(影片烘「目前那一幀」成靜圖;靜圖直接給);無則 null
+function curRef(){
+  if(refKind==='video' && refVid.videoWidth){
+    try{
+      const c=document.createElement('canvas'); c.width=refVid.videoWidth; c.height=refVid.videoHeight;
+      c.getContext('2d').drawImage(refVid,0,0);
+      return {src:c.toDataURL('image/jpeg',0.85), x:refState.x, y:refState.y, scale:refState.scale, flip:refState.flip, opacity:refState.opacity};
+    }catch(e){}
+  }
+  return refSrc ? {src:refSrc, x:refState.x, y:refState.y, scale:refState.scale, flip:refState.flip, opacity:refState.opacity} : null;
+}
+// 把某 view 的(靜態)參考圖套上畫面;切視角一律回靜圖模式
 function showRef(ref){
+  hideVideo();
   if(ref && ref.src){
-    refSrc=ref.src; refImg.src=ref.src; refImg.style.display='block';
+    refKind='image'; refSrc=ref.src; refImg.src=ref.src; refImg.style.display='block';
     refState.x=ref.x||0; refState.y=ref.y||0; refState.scale=ref.scale||1; refState.flip=!!ref.flip;
     if(ref.opacity!=null) refState.opacity=ref.opacity;
   } else {
-    refSrc=null; refImg.removeAttribute('src'); refImg.style.display='none';
+    refKind=null; refSrc=null; refImg.removeAttribute('src'); refImg.style.display='none';
     refState.x=0; refState.y=0; refState.scale=1; refState.flip=false;
   }
   setRefUI(); applyRef();
 }
+// ── 靜態參考圖 ──
 document.getElementById('refFile').addEventListener('change',e=>{
   const f=e.target.files&&e.target.files[0]; if(!f)return;
   const rd=new FileReader();
   rd.onload=()=>{
-    refSrc=rd.result; refImg.src=refSrc; refImg.style.display='block';
+    hideVideo();
+    refKind='image'; refSrc=rd.result; refImg.src=refSrc; refImg.style.display='block';
     if(refState.opacity<0.05) refState.opacity=0.5;
     setRefUI(); applyRef();
   };
   rd.readAsDataURL(f);
   e.target.value='';   // 允許重新載入同一個檔案
 });
+// ── 參考影片(scrub 找幀;存 view 時由 curRef 烘成靜圖)──
+document.getElementById('refVidFile').addEventListener('change',e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f)return;
+  refImg.style.display='none'; refSrc=null;        // 關靜圖
+  refKind='video';
+  refVid.src=URL.createObjectURL(f); refVid.style.display='block';
+  if(refState.opacity<0.05) refState.opacity=0.5;
+  document.getElementById('refVidScrubWrap').style.display='';
+  refVid.addEventListener('loadedmetadata',()=>{ updateVidTime(); applyRef(); },{once:true});
+  setRefUI(); applyRef();
+  e.target.value='';
+});
+const refVidScrub=document.getElementById('refVidScrub');
+function updateVidTime(){
+  const d=refVid.duration||0, t=refVid.currentTime||0;
+  document.getElementById('refVidLbl').textContent=t.toFixed(2)+'s';
+  document.getElementById('refVidTime').textContent=t.toFixed(2)+' / '+(isFinite(d)?d.toFixed(2):'?')+'s';
+  if(isFinite(d)&&d>0 && document.activeElement!==refVidScrub) refVidScrub.value=Math.round(t/d*1000);
+}
+refVidScrub.addEventListener('input',()=>{ if(refKind==='video'&&isFinite(refVid.duration)) refVid.currentTime=(refVidScrub.value/1000)*refVid.duration; });
+refVid.addEventListener('seeked',updateVidTime);
+refVid.addEventListener('timeupdate',updateVidTime);
+function stepFrame(dir){ if(refKind!=='video'||!isFinite(refVid.duration))return; const fps=30; refVid.currentTime=Math.max(0,Math.min(refVid.duration,(refVid.currentTime||0)+dir/fps)); }
+document.getElementById('refVidPrev').addEventListener('click',()=>stepFrame(-1));
+document.getElementById('refVidNext').addEventListener('click',()=>stepFrame(1));
+// ── 共用:opacity / 翻轉 / 清除 / 對齊 ──
 document.getElementById('r_refop').addEventListener('input',e=>{ refState.opacity=parseFloat(e.target.value); document.getElementById('v_refop').textContent=refState.opacity.toFixed(2); applyRef(); });
 document.getElementById('refFlip').addEventListener('click',e=>{ refState.flip=!refState.flip; e.target.classList.toggle('on',refState.flip); applyRef(); });
-document.getElementById('refClear').addEventListener('click',()=>{ refSrc=null; refImg.removeAttribute('src'); refImg.style.display='none'; refState.x=0; refState.y=0; refState.scale=1; refState.flip=false; document.getElementById('refFlip').classList.remove('on'); applyRef(); });
-document.getElementById('refAlign').addEventListener('click',e=>{ refAlignOn=!refAlignOn; e.target.classList.toggle('on',refAlignOn); refImg.classList.toggle('align',refAlignOn); });
-refImg.addEventListener('pointerdown',e=>{ if(!refAlignOn)return; refDrag=true; _rpx=e.clientX; _rpy=e.clientY; refImg.setPointerCapture(e.pointerId); });
-refImg.addEventListener('pointermove',e=>{ if(!refDrag)return; refState.x+=e.clientX-_rpx; refState.y+=e.clientY-_rpy; _rpx=e.clientX; _rpy=e.clientY; applyRef(); });
-refImg.addEventListener('pointerup',()=>{ refDrag=false; });
-refImg.addEventListener('wheel',e=>{ if(!refAlignOn)return; e.preventDefault(); refState.scale=Math.max(0.2,Math.min(4,refState.scale - e.deltaY*0.0012)); applyRef(); },{passive:false});
+document.getElementById('refClear').addEventListener('click',()=>{ hideVideo(); refKind=null; refSrc=null; refImg.removeAttribute('src'); refImg.style.display='none'; refState.x=0; refState.y=0; refState.scale=1; refState.flip=false; document.getElementById('refFlip').classList.remove('on'); applyRef(); });
+document.getElementById('refAlign').addEventListener('click',e=>{ refAlignOn=!refAlignOn; e.target.classList.toggle('on',refAlignOn); refImg.classList.toggle('align',refAlignOn); refVid.classList.toggle('align',refAlignOn); });
+[refImg, refVid].forEach(el=>{
+  el.addEventListener('pointerdown',e=>{ if(!refAlignOn)return; refDrag=true; _rpx=e.clientX; _rpy=e.clientY; el.setPointerCapture(e.pointerId); });
+  el.addEventListener('pointermove',e=>{ if(!refDrag)return; refState.x+=e.clientX-_rpx; refState.y+=e.clientY-_rpy; _rpx=e.clientX; _rpy=e.clientY; applyRef(); });
+  el.addEventListener('pointerup',()=>{ refDrag=false; });
+  el.addEventListener('wheel',e=>{ if(!refAlignOn)return; e.preventDefault(); refState.scale=Math.max(0.2,Math.min(4,refState.scale - e.deltaY*0.0012)); applyRef(); },{passive:false});
+});
 
 // ===== 關節對位 SOLVER(單視角 MVP)===== 純表現層;phase-agnostic:一律讀寫「目前 active key」
 let solveMode=false;
