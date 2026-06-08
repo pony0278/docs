@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - punch_studio.html
+      - pose_test.html
       - .github/workflows/deploy-pages.yml
   workflow_dispatch:
 
@@ -37,6 +38,8 @@ jobs:
           cp punch_studio.html _site/index.html
           # 保留原檔名路徑(指南/書籤可用)
           cp punch_studio.html _site/punch_studio.html
+          # MediaPipe 乾淨測試頁
+          cp pose_test.html _site/pose_test.html
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
