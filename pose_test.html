@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MediaPipe 姿勢偵測 — 乾淨測試</title>
+<style>
+  :root{ --bg:#0b0b12; --panel:#181824; --line:#262636; --txt:#e7e7f0; --dim:#7a7a92;
+    --cy:#13e0d4; --hot:#ff2e6e; --lime:#9eff5c; --amber:#ffd23f;
+    --mono:'JetBrains Mono', ui-monospace, monospace; }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg); color:var(--txt); font-family:var(--mono); padding:18px; min-height:100vh}
+  h1{font-size:18px; margin:0 0 4px} .sub{color:var(--dim); font-size:12px; margin:0 0 14px; line-height:1.6}
+  .bar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; padding:12px; border:1px solid var(--line);
+    border-radius:10px; background:var(--panel); margin-bottom:14px}
+  .bar label{font-size:12px; color:var(--dim)}
+  select,button,.filebtn{cursor:pointer; padding:8px 12px; border-radius:8px; border:1px solid var(--line);
+    background:#13131d; color:var(--txt); font-family:var(--mono); font-size:12px; font-weight:700}
+  button:hover,.filebtn:hover{border-color:var(--cy); color:var(--cy)}
+  .filebtn input{display:none}
+  #status{font-size:12px; color:var(--amber); margin-left:auto}
+  #drop{border:2px dashed var(--line); border-radius:12px; padding:26px; text-align:center; color:var(--dim);
+    margin-bottom:16px; font-size:13px; transition:.15s}
+  #drop.over{border-color:var(--cy); color:var(--cy); background:rgba(19,224,212,.06)}
+  #grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px}
+  .card{border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel)}
+  .card canvas{display:block; width:100%; height:auto; background:#000}
+  .card .meta{padding:9px 11px; font-size:11px; line-height:1.6}
+  .card .name{color:var(--txt); font-weight:700; word-break:break-all}
+  .card .verdict{font-size:13px; font-weight:700; margin:3px 0}
+  .card .stat{color:var(--dim)}
+  .legend{font-size:11px; color:var(--dim); margin-top:14px; line-height:1.7}
+  .legend b{color:var(--cy)} .legend .hot{color:var(--hot)}
+  a{color:var(--cy)}
+</style>
+</head>
+<body>
+  <h1>MediaPipe 姿勢偵測 — 乾淨測試</h1>
+  <p class="sub">丟你的分鏡逐幀截圖進來，直接把偵測到的骨架畫在圖上 + 給信心評分。<br>
+    用來單獨驗證「MediaPipe 吃不吃得下你的美術風格」，跟 PUNCH STUDIO 完全分開。</p>
+
+  <div class="bar">
+    <label>模型</label>
+    <select id="modelSel">
+      <option value="lite">lite（最快）</option>
+      <option value="full" selected>full（平衡）</option>
+      <option value="heavy">heavy（最準）</option>
+    </select>
+    <label class="filebtn">📁 選擇截圖（可多選）<input type="file" id="fileInput" accept="image/*" multiple></label>
+    <button id="rerunBtn" title="換模型後用同一批圖重新偵測">↻ 重新偵測</button>
+    <button id="clearBtn">🗑 清空</button>
+    <span id="status">初始化中…</span>
+  </div>
+
+  <div id="drop">把圖片拖到這裡，或用上面「選擇截圖」</div>
+  <div id="grid"></div>
+
+  <div class="legend">
+    線 = <b>骨架連線</b>，點 = <span class="hot">關節</span>。評分：<b>✅ 良好</b>（平均信心 &gt;0.7 且低信心關節少）、
+    <b>⚠️ 偏弱</b>、<b>❌ 很弱/沒抓到</b>。<br>
+    若多數圖是 ❌ → 風格化太強，MediaPipe 不適用；若 ✅/⚠️ 多 → 可在 PUNCH STUDIO 用「🤖 AI 偵測」當初值再手修。<br>
+    提示：請用 <b>https 線上版</b> 或 <b>本機 http</b> 開此頁；直接 file:// 雙擊可能載不到模型。
+  </div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver, DrawingUtils }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const VER = "0.10.14";
+const MODELS = {
+  lite:  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+  full:  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  heavy: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task"
+};
+
+const statusEl = document.getElementById('status');
+const grid = document.getElementById('grid');
+const modelSel = document.getElementById('modelSel');
+const SHOTS = [];                 // 已載入的圖 {name, img}
+let vision=null, landmarker=null, curModel=null;
+
+function setStatus(t, color){ statusEl.textContent = t; statusEl.style.color = color || 'var(--amber)'; }
+
+async function getLandmarker(model){
+  if(landmarker && curModel===model) return landmarker;
+  setStatus('載入模型 '+model+'…（首次需下載）');
+  if(!vision) vision = await FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VER}/wasm`);
+  if(landmarker){ try{ landmarker.close(); }catch(e){} landmarker=null; }
+  landmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions:{ modelAssetPath: MODELS[model] },
+    runningMode:"IMAGE", numPoses:1,
+    minPoseDetectionConfidence:0.2     // 調低門檻 → 風格化圖也讓你看到「即使很弱」的偵測
+  });
+  curModel = model;
+  setStatus('就緒（'+model+'）', 'var(--lime)');
+  return landmarker;
+}
+
+async function loadImage(file){
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.src = url;
+  try{ await img.decode(); }
+  catch(e){ await new Promise(r=>{ img.onload=r; img.onerror=r; }); }
+  URL.revokeObjectURL(url);
+  return img;
+}
+
+function renderCard(name, img, res){
+  const lms = res && res.landmarks && res.landmarks[0];
+  const card = document.createElement('div'); card.className='card';
+  const W = Math.min(380, img.naturalWidth || 380);
+  const scale = (img.naturalWidth ? W/img.naturalWidth : 1);
+  const H = Math.round((img.naturalHeight || 300) * scale);
+  const cv = document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(img, 0, 0, W, H);
+
+  let verdict='❌ 沒偵測到人形', vColor='var(--hot)', statLine='';
+  if(lms){
+    const du = new DrawingUtils(ctx);
+    du.drawConnectors(lms, PoseLandmarker.POSE_CONNECTIONS, { color:'#13e0d4', lineWidth:2 });
+    du.drawLandmarks(lms, { color:'#ff2e6e', fillColor:'#ff2e6e', lineWidth:1, radius:3 });
+    let sum=0, low=0;
+    lms.forEach(l=>{ const v=(l.visibility!=null)?l.visibility:1; sum+=v; if(v<0.5) low++; });
+    const avg = sum/lms.length;
+    if(avg>0.7 && low<=3){ verdict='✅ 偵測良好'; vColor='var(--lime)'; }
+    else if(avg>0.4){ verdict='⚠️ 偵測到但偏弱'; vColor='var(--amber)'; }
+    else { verdict='❌ 偵測很弱'; vColor='var(--hot)'; }
+    statLine = `平均信心 ${avg.toFixed(2)} · 低信心關節 ${low}/${lms.length} · 模型 ${curModel}`;
+  } else {
+    statLine = `模型 ${curModel} 找不到人 → 可換 heavy 再試`;
+  }
+  const meta = document.createElement('div'); meta.className='meta';
+  meta.innerHTML = `<div class="name">${name}</div>`+
+    `<div class="verdict" style="color:${vColor}">${verdict}</div>`+
+    `<div class="stat">${statLine}</div>`;
+  card.appendChild(cv); card.appendChild(meta);
+  grid.appendChild(card);
+}
+
+async function detectAll(){
+  grid.innerHTML='';
+  if(!SHOTS.length){ return; }
+  let lm;
+  try{ lm = await getLandmarker(modelSel.value); }
+  catch(err){ setStatus('模型載入失敗：'+((err&&err.message)||err)+'（多半離線或 file:// 限制）', 'var(--hot)'); return; }
+  setStatus('偵測中…');
+  for(const s of SHOTS){
+    let res=null;
+    try{ res = lm.detect(s.img); }catch(e){ res=null; }
+    renderCard(s.name, s.img, res);
+  }
+  setStatus(`完成：${SHOTS.length} 張（${curModel}）`, 'var(--lime)');
+}
+
+async function addFiles(fileList){
+  const files = [...fileList].filter(f=>f.type.startsWith('image/'));
+  if(!files.length) return;
+  setStatus('讀取圖片…');
+  for(const f of files){
+    const img = await loadImage(f);
+    SHOTS.push({ name:f.name, img });
+  }
+  await detectAll();
+}
+
+// ---- inputs ----
+document.getElementById('fileInput').addEventListener('change', e=>{ addFiles(e.target.files); e.target.value=''; });
+document.getElementById('rerunBtn').addEventListener('click', detectAll);
+document.getElementById('clearBtn').addEventListener('click', ()=>{ SHOTS.length=0; grid.innerHTML=''; setStatus('已清空', 'var(--dim)'); });
+modelSel.addEventListener('change', detectAll);
+
+const drop = document.getElementById('drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e=>{ if(e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+// 整頁也接受拖放
+['dragover','drop'].forEach(ev=>document.body.addEventListener(ev, e=>e.preventDefault()));
+
+// 預熱模型(背景載入,讓第一張更快)
+getLandmarker(modelSel.value).catch(err=>{
+  setStatus('模型載入失敗：'+((err&&err.message)||err)+'（請用 https 或本機 http 開，勿 file://）', 'var(--hot)');
+});
+</script>
+</body>
+</html>
