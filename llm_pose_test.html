@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM 視覺姿勢偵測 — chibi 測試</title>
+<style>
+  :root{ --bg:#0b0b12; --panel:#181824; --line:#262636; --txt:#e7e7f0; --dim:#7a7a92;
+    --cy:#13e0d4; --hot:#ff2e6e; --lime:#9eff5c; --amber:#ffd23f;
+    --mono:'JetBrains Mono', ui-monospace, monospace; }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg); color:var(--txt); font-family:var(--mono); padding:18px; min-height:100vh}
+  h1{font-size:18px; margin:0 0 4px} .sub{color:var(--dim); font-size:12px; margin:0 0 14px; line-height:1.6}
+  .bar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; padding:12px; border:1px solid var(--line);
+    border-radius:10px; background:var(--panel); margin-bottom:10px}
+  .bar label{font-size:12px; color:var(--dim)}
+  select,button,.filebtn,input[type=password]{cursor:pointer; padding:8px 12px; border-radius:8px; border:1px solid var(--line);
+    background:#13131d; color:var(--txt); font-family:var(--mono); font-size:12px; font-weight:700}
+  input[type=password]{cursor:text; min-width:240px; font-weight:400}
+  button:hover,.filebtn:hover{border-color:var(--cy); color:var(--cy)}
+  button.go{border-color:var(--lime); color:var(--lime)}
+  .filebtn input{display:none}
+  #status{font-size:12px; color:var(--amber); margin-left:auto; max-width:46ch; text-align:right}
+  .warn{font-size:11px; color:var(--amber); margin:0 0 12px; line-height:1.6;
+    border:1px solid rgba(255,210,63,.3); border-radius:8px; padding:8px 11px; background:rgba(255,210,63,.05)}
+  #drop{border:2px dashed var(--line); border-radius:12px; padding:22px; text-align:center; color:var(--dim);
+    margin-bottom:16px; font-size:13px; transition:.15s}
+  #drop.over{border-color:var(--cy); color:var(--cy); background:rgba(19,224,212,.06)}
+  #grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px}
+  .card{border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel)}
+  .card canvas{display:block; width:100%; height:auto; background:#000}
+  .card .meta{padding:9px 11px; font-size:11px; line-height:1.6}
+  .card .name{color:var(--txt); font-weight:700; word-break:break-all}
+  .card .verdict{font-size:13px; font-weight:700; margin:3px 0}
+  .card .stat{color:var(--dim)}
+  .card .raw{margin-top:6px}
+  .card .raw summary{cursor:pointer; color:var(--cy); font-size:10px}
+  .card .raw pre{white-space:pre-wrap; word-break:break-all; font-size:9.5px; color:var(--dim); max-height:160px; overflow:auto; margin:5px 0 0}
+  .legend{font-size:11px; color:var(--dim); margin-top:14px; line-height:1.7}
+  .legend b{color:var(--cy)}
+</style>
+</head>
+<body>
+  <h1>LLM 視覺姿勢偵測 — chibi 測試</h1>
+  <p class="sub">丟卡通/Q版分鏡截圖 → Claude 看圖估計 13 個關節 → 畫在你圖上。<br>
+    用來驗證「LLM 能不能對你的美術放出可用初值」(MediaPipe 抓不到的那種)。</p>
+
+  <p class="warn">⚠️ 這會呼叫 <b>付費</b> Anthropic API,<b>每張圖計費</b>。你的 API key 只存在<b>本機瀏覽器(localStorage)</b>、不會上傳、頁面原始碼也不含 key。圖片會送到 Anthropic 進行辨識。</p>
+
+  <div class="bar">
+    <label>API key</label>
+    <input type="password" id="keyInput" placeholder="sk-ant-... (只存本機)">
+    <label>模型</label>
+    <select id="modelSel">
+      <option value="claude-haiku-4-5-20251001">Haiku 4.5（最便宜）</option>
+      <option value="claude-sonnet-4-6" selected>Sonnet 4.6（平衡）</option>
+      <option value="claude-opus-4-8">Opus 4.8（最強）</option>
+    </select>
+    <label class="filebtn">📁 選擇截圖（可多選）<input type="file" id="fileInput" accept="image/*" multiple></label>
+    <button id="runBtn" class="go" title="對已載入的圖呼叫 LLM(會計費)">▶ 用 LLM 偵測</button>
+    <button id="clearBtn">🗑 清空</button>
+    <span id="status">貼上 key、載入圖,再按「▶ 用 LLM 偵測」</span>
+  </div>
+
+  <div id="drop">把圖片拖到這裡，或用上面「選擇截圖」（載入後不會自動呼叫，要按▶才送出）</div>
+  <div id="grid"></div>
+
+  <div class="legend">
+    線 = <b>骨架</b>，點 = <b>關節</b>（紅=可見、灰=LLM 標記看不到的推測位置）。<br>
+    判讀:大致貼對 → LLM 初值可用,值得整進 PUNCH STUDIO(放點→你手修→Solve);亂放/錯位 → LLM 對 chibi 也不行,那就純手動。<br>
+    成本控制:先丟 1–2 張試,別整套丟。Haiku 最便宜、Opus 最準。
+  </div>
+
+<script>
+const JOINTS = ["head","shL","elL","fiL","shR","elR","fiR","hipL","knL","anL","hipR","knR","anR"];
+const LABELS = {head:"頭",shL:"左肩",elL:"左肘",fiL:"左拳",shR:"右肩",elR:"右肘",fiR:"右拳",hipL:"左髖",knL:"左膝",anL:"左踝",hipR:"右髖",knR:"右膝",anR:"右踝"};
+const BONES = [["head","shL"],["head","shR"],["shL","shR"],["shL","elL"],["elL","fiL"],
+  ["shR","elR"],["elR","fiR"],["shL","hipL"],["shR","hipR"],["hipL","hipR"],
+  ["hipL","knL"],["knL","anL"],["hipR","knR"],["knR","anR"]];
+
+const PROMPT =
+`你是動作分鏡的關節標註器。圖中是一個 Q版/卡通(大頭、小身體、短腿)的格鬥角色單格動作,可能是側面、會自我遮擋。
+請估計以下 13 個關節在「這張圖」中的位置,用正規化座標 x(0=最左,1=最右)、y(0=最上,1=最下)。
+即使側面/被遮擋/卡通比例,也要依卡通解剖盡力估計;真的看不到的關節把 visible 設 false,但仍給最合理的推測位置。
+關節 id:head(頭中心) shL(左肩) elL(左肘) fiL(左拳/手腕) shR elR fiR hipL(左髖) knL(左膝) anL(左踝) hipR knR anR。
+左右以「角色自身」為準。
+只輸出 JSON,不要任何其他文字或 markdown:
+{"joints":{"head":{"x":0.0,"y":0.0,"visible":true}, ...全部13個...},"phase":"idle|anti|strike|impact|recovery 擇一(猜)","heelUp":{"L":false,"R":false}}`;
+
+const statusEl=document.getElementById('status');
+const grid=document.getElementById('grid');
+const keyInput=document.getElementById('keyInput');
+const modelSel=document.getElementById('modelSel');
+const SHOTS=[];   // {name, img, send:{b64,mediaType}}
+const KEY_STORE='PUNCH_LLM_KEY';
+
+function setStatus(t,c){ statusEl.textContent=t; statusEl.style.color=c||'var(--amber)'; }
+
+// 還原已存 key
+try{ const k=localStorage.getItem(KEY_STORE); if(k) keyInput.value=k; }catch(e){}
+keyInput.addEventListener('change',()=>{ try{ localStorage.setItem(KEY_STORE, keyInput.value.trim()); }catch(e){} });
+
+function loadImage(file){
+  return new Promise((res)=>{ const url=URL.createObjectURL(file); const img=new Image();
+    img.onload=()=>{ URL.revokeObjectURL(url); res(img); }; img.onerror=()=>res(img); img.src=url; });
+}
+// 縮到長邊 <=640 再送(省 token/成本),回 base64(jpeg)
+function downscaleSend(img,max=640){
+  const w=img.naturalWidth||max, h=img.naturalHeight||max;
+  const s=Math.min(1, max/Math.max(w,h));
+  const cw=Math.max(1,Math.round(w*s)), ch=Math.max(1,Math.round(h*s));
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+  cv.getContext('2d').drawImage(img,0,0,cw,ch);
+  const url=cv.toDataURL('image/jpeg',0.85);
+  return { b64:url.split(',')[1], mediaType:'image/jpeg' };
+}
+
+function drawCard(shot, parsed, rawText, err){
+  const card=document.createElement('div'); card.className='card';
+  const img=shot.img;
+  const W=Math.min(380, img.naturalWidth||380);
+  const scale=(img.naturalWidth? W/img.naturalWidth : 1);
+  const H=Math.round((img.naturalHeight||300)*scale);
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d'); ctx.drawImage(img,0,0,W,H);
+
+  let verdict='❌ 解析失敗', vColor='var(--hot)', stat='';
+  const J = parsed && parsed.joints;
+  if(J){
+    // 骨架線
+    ctx.strokeStyle='#13e0d4'; ctx.lineWidth=2;
+    BONES.forEach(([a,b])=>{ const pa=J[a],pb=J[b]; if(!pa||!pb)return;
+      ctx.beginPath(); ctx.moveTo(pa.x*W,pa.y*H); ctx.lineTo(pb.x*W,pb.y*H); ctx.stroke(); });
+    // 關節點
+    let vis=0,n=0;
+    JOINTS.forEach(id=>{ const p=J[id]; if(!p)return; n++;
+      const visible=p.visible!==false; if(visible) vis++;
+      ctx.fillStyle = visible? '#ff2e6e' : '#7a7a92';
+      ctx.beginPath(); ctx.arc(p.x*W,p.y*H, visible?4:3, 0, Math.PI*2); ctx.fill(); });
+    verdict = n>=10 ? '🟢 LLM 有放點（看落點準不準）' : '🟡 只放了部分點';
+    vColor = n>=10 ? 'var(--lime)' : 'var(--amber)';
+    stat = `關節 ${n}/13 · 可見 ${vis} · phase=${parsed.phase||'?'} · heel L${parsed.heelUp?.L?'↑':'-'} R${parsed.heelUp?.R?'↑':'-'} · ${modelSel.value}`;
+  } else {
+    stat = err ? ('錯誤：'+err) : '回應不是預期 JSON';
+  }
+  const meta=document.createElement('div'); meta.className='meta';
+  meta.innerHTML=`<div class="name">${shot.name}</div>`+
+    `<div class="verdict" style="color:${vColor}">${verdict}</div>`+
+    `<div class="stat">${stat}</div>`+
+    (rawText? `<details class="raw"><summary>原始回應</summary><pre>${rawText.replace(/</g,'&lt;')}</pre></details>`:'');
+  card.appendChild(cv); card.appendChild(meta);
+  grid.appendChild(card);
+}
+
+async function callClaude(key, model, send){
+  const r = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{
+      "x-api-key": key,
+      "anthropic-version":"2023-06-01",
+      "anthropic-dangerous-direct-browser-access":"true",
+      "content-type":"application/json"
+    },
+    body: JSON.stringify({
+      model, max_tokens:1024,
+      messages:[{ role:"user", content:[
+        { type:"image", source:{ type:"base64", media_type:send.mediaType, data:send.b64 } },
+        { type:"text", text: PROMPT }
+      ]}]
+    })
+  });
+  if(!r.ok){ throw new Error("API "+r.status+": "+(await r.text()).slice(0,180)); }
+  const j = await r.json();
+  return (j.content && j.content[0] && j.content[0].text) || "";
+}
+function parseJSON(txt){ const m=txt && txt.match(/\{[\s\S]*\}/); if(!m) return null; try{ return JSON.parse(m[0]); }catch(e){ return null; } }
+
+async function runDetect(){
+  const key=keyInput.value.trim();
+  if(!key){ setStatus('請先貼上 Anthropic API key','var(--hot)'); return; }
+  if(!SHOTS.length){ setStatus('先載入圖片','var(--hot)'); return; }
+  try{ localStorage.setItem(KEY_STORE,key); }catch(e){}
+  grid.innerHTML='';
+  for(let i=0;i<SHOTS.length;i++){
+    setStatus(`偵測中… ${i+1}/${SHOTS.length}（${modelSel.value}）`);
+    let txt='', parsed=null, err=null;
+    try{ txt = await callClaude(key, modelSel.value, SHOTS[i].send); parsed = parseJSON(txt); }
+    catch(e){ err=(e&&e.message)||String(e); }
+    drawCard(SHOTS[i], parsed, txt, err);
+  }
+  setStatus(`完成：${SHOTS.length} 張（${modelSel.value}）`,'var(--lime)');
+}
+
+async function addFiles(fileList){
+  const files=[...fileList].filter(f=>f.type.startsWith('image/'));
+  if(!files.length) return;
+  setStatus('讀取圖片…');
+  for(const f of files){
+    const img=await loadImage(f);
+    SHOTS.push({ name:f.name, img, send:downscaleSend(img) });
+    // 先畫出縮圖(未偵測)
+    drawCard({name:f.name, img}, null, null, null);
+  }
+  grid.innerHTML=''; SHOTS.forEach(s=>drawCard(s,null,null,null));
+  setStatus(`已載入 ${SHOTS.length} 張,按「▶ 用 LLM 偵測」送出（會計費）`);
+}
+
+document.getElementById('fileInput').addEventListener('change',e=>{ addFiles(e.target.files); e.target.value=''; });
+document.getElementById('runBtn').addEventListener('click',runDetect);
+document.getElementById('clearBtn').addEventListener('click',()=>{ SHOTS.length=0; grid.innerHTML=''; setStatus('已清空','var(--dim)'); });
+
+const drop=document.getElementById('drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop',e=>{ if(e.dataTransfer&&e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+['dragover','drop'].forEach(ev=>document.body.addEventListener(ev,e=>e.preventDefault()));
+</script>
+</body>
+</html>
