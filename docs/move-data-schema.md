@@ -4,7 +4,7 @@
 >
 > **定位**：目前「先自用」服務 Mastery PD，但格式刻意設計成**引擎中立**，保留未來外推成獨立工具的可能。
 >
-> **狀態**：`version: 3`（對應 PUNCH STUDIO 的 `STATE_VERSION = 3`）。
+> **狀態**：`version: 4`（對應 PUNCH STUDIO 的 `STATE_VERSION = 4`）。
 
 ---
 
@@ -18,7 +18,7 @@
    才能滿足 Mastery PD 的 lockstep PvP。詳見 §6。
 3. **`poseKeys` 是權威軸列表**
    消費端**應讀取檔案內的 `poseKeys` 陣列**來決定軸的順序與數量，
-   **不要** hardcode（v3 為 41 軸；v2 為 39 軸，以 `poseKeys.length` 為準）。
+   **不要** hardcode（v4 為 47 軸；v3=41、v2=39，以 `poseKeys.length` 為準）。
 4. **向前相容**：未知欄位應被忽略而非報錯；缺漏欄位以預設值補齊（見各節）。
 
 ---
@@ -29,7 +29,7 @@
 {
   "version": 2,                 // 格式版本（整數）。消費端必須檢查。
   "createdBy": "PUNCH STUDIO",  // 產生者標記（資訊用途）
-  "poseKeys": [ "root_y", ... ],// 權威軸名陣列（v3 = 41 軸，順序固定，見 §3）
+  "poseKeys": [ "root_y", ... ],// 權威軸名陣列（v4 = 47 軸，順序固定，見 §3）
   "seq":    [ /* TimelineKey */ ],  // 有序時間軸（= 格鬥 frame data），見 §4
   "phases": { "<keyName>": { /* Pose */ } }, // 每個 key 一組 pose，見 §3
   "lags":   { "aL":0, "aR":0.2, "lL":0, "lR":0.1 }, // per-limb 鞭打延遲，見 §5
@@ -48,7 +48,7 @@
 **scale 類軸（`body_scale`、任何 `*_scale`）預設為 `1`；其餘預設 `0`。**
 缺漏軸由消費端補預設值。
 
-### v3 的 41 條軸（順序 = `poseKeys`）
+### v4 的 47 條軸（順序 = `poseKeys`）
 
 | 群組 | 軸 | 說明 | 範圍 | 單位 |
 |------|----|------|------|------|
@@ -71,16 +71,19 @@
 | | `aL_ex` | 肘（0=直 / 180=折） | −20…160 | ° |
 | | `aL_idle` | → IDLE 比例（1=強制垂下） | 0…1 | — |
 | | `aL_scale` | 前臂/拳頭縮放（命中放大） | 0.5…2.5 | × |
-| **ARM R**（後手） | `aR_sx` `aR_sy` `aR_sz` `aR_ex` `aR_idle` `aR_scale` | 同 ARM L | 同上 | |
+| | `aL_wx` | 腕 X（屈伸/勾腕，v4 新增） | −90…90 | ° |
+| | `aL_wy` | 腕 Y（沿前臂軸扭轉/旋前旋後，v4 新增） | −90…90 | ° |
+| **ARM R**（後手） | `aR_sx` `aR_sy` `aR_sz` `aR_ex` `aR_idle` `aR_scale` `aR_wx` `aR_wy` | 同 ARM L | 同上 | |
 | **LEG L**（前腿） | `lL_hx` | 髖 X（前後擺） | −60…60 | ° |
-| | `lL_hy` | 髖 Y（外旋，正=外） | −60…60 | ° |
-| | `lL_hz` | 髖 Z（橫向張開/O 腿，正=外） | −45…60 | ° |
-| | `lL_kx` | 膝（0=直 / 90=蹲） | −20…90 | ° |
-| | `lL_ax` | 腳踝微調 | −60…60 | ° |
+| | `lL_hy` | 髖 Y（外旋/整條腿轉，正=外） | −150…150 | ° |
+| | `lL_hz` | 髖 Z（橫向張開/劈腿，正=外） | −60…120 | ° |
+| | `lL_kx` | 膝（0=直 / 90=蹲，hinge 僅 X） | −20…90 | ° |
+| | `lL_ax` | 腳踝 X 微調 | −60…60 | ° |
 | | `lL_idle` | → IDLE 比例（1=強制直立） | 0…1 | — |
 | | `lL_scale` | 小腿/腳掌縮放 | 0.5…2.5 | × |
 | | `lL_contact` | 腳掌接觸鎖（0=平踩 / 1=墊腳抬跟 / 2=抬起離地） | 0 / 1 / 2 | enum |
-| **LEG R**（後腿） | `lR_hx` `lR_hy` `lR_hz` `lR_kx` `lR_ax` `lR_idle` `lR_scale` `lR_contact` | 同 LEG L | 同上 | |
+| | `lL_ty` | 腳尖朝向（踝 Y，正=外八，v4 新增；可獨立於髖瞄準腳尖） | −120…120 | ° |
+| **LEG R**（後腿） | `lR_hx` `lR_hy` `lR_hz` `lR_kx` `lR_ax` `lR_idle` `lR_scale` `lR_contact` `lR_ty` | 同 LEG L | 同上 | |
 
 > 範圍為編輯器 slider 的軟限制；消費端**建議**依此 clamp 作為合法性檢查（也可當關節角度上限，輔助 §「景深歧義」的 Solve 約束）。
 > 單位：`°`=度，`u`=世界單位（相對 `dim`），`×`=倍率，`enum`=離散整數。
@@ -179,7 +182,8 @@ pose 的角度軸可沿用，`*_py/*_pz/*_scale` 等位置/倍率軸需依 `dim`
 ### 版本歷史
 | version | 變更 |
 |---------|------|
-| 3 | 目前格式：**41 軸**，新增 `lL_contact` / `lR_contact`（腳掌接觸鎖，治墊腳/重心）。遷移：v2→v3 缺的接觸軸補預設 `0`（平踩），行為與舊版一致。|
+| 4 | 目前格式：**47 軸**，新增腕關節 `aL_wx`/`aL_wy`/`aR_wx`/`aR_wy` 與腳尖朝向 `lL_ty`/`lR_ty`；加大髖 Y（±150）、髖 Z（−60…120）範圍。遷移：v3→v4 缺的軸補預設 `0`，行為與舊版一致。|
+| 3 | 41 軸，新增 `lL_contact` / `lR_contact`（腳掌接觸鎖，治墊腳/重心）。|
 | 2 | 39 軸、有序 `seq`（含 `frame`/`returnFrames`）、`lags`、`dim`。|
 | 1 | （PUNCH STUDIO 早期；舊「Godot text」與勾選覆寫格式，已不建議。）|
 
@@ -189,7 +193,7 @@ pose 的角度軸可沿用，`*_py/*_pz/*_scale` 等位置/倍率軸需依 `dim`
 
 ```jsonc
 {
-  "version": 3,
+  "version": 4,
   "createdBy": "PUNCH STUDIO",
   "poseKeys": ["root_y","root_x","root_py","root_pz","sq","body_scale","squat",
     "spine_x","spine_y","pelvis_y","head_y","head_x","head_pz",
@@ -197,7 +201,8 @@ pose 的角度軸可沿用，`*_py/*_pz/*_scale` 等位置/倍率軸需依 `dim`
     "aR_sx","aR_sy","aR_sz","aR_ex","aR_idle","aR_scale",
     "lL_hx","lL_hy","lL_hz","lL_kx","lL_ax","lL_idle","lL_scale",
     "lR_hx","lR_hy","lR_hz","lR_kx","lR_ax","lR_idle","lR_scale",
-    "lL_contact","lR_contact"],
+    "lL_contact","lR_contact",
+    "aL_wx","aL_wy","aR_wx","aR_wy","lL_ty","lR_ty"],
   "seq": [
     { "name":"idle",   "frame":0,  "ease":"out", "impact":false, "tag":"idle",   "returnFrames":10 },
     { "name":"anti",   "frame":7,  "ease":"out", "impact":false, "tag":"anti"   },
