@@ -1389,21 +1389,6 @@ function refreshSliders(){
 
 // ===== Timeline marker drag =====
 let timelineDrag = null;
-let timelineUiRefreshQueued = false;
-function scheduleTimelineUiRefresh({controls=false, pose=false}={}){
-  if(timelineUiRefreshQueued) return;
-  timelineUiRefreshQueued = true;
-  requestAnimationFrame(()=>{
-    timelineUiRefreshQueued = false;
-    buildPhaseTabs();
-    if(controls) buildTimingControls();
-    if(pose){
-      refreshSliders();
-      const p = PHASES[activePhase];
-      if(p) applyPose(p);
-    }
-  });
-}
 function updateDraggedKeyFrame(clientX){
   if(!timelineDrag) return;
   const key = SEQ.find(k=>k.name===timelineDrag.name);
@@ -1417,19 +1402,23 @@ function updateDraggedKeyFrame(clientX){
   timelineDrag.didMove = true;
   key.frame = nextFrame;
   activePhase = key.name;
-  normalizeTimelineInPlace();
+  // 拖曳中「不要」重建 timeline DOM(會把正在拖的 marker 砍掉 → 拖不動);只即時移動它 + 更新預覽
+  const displayMax = timelineDisplayMaxFrame();
+  const leftPct = Math.max(0, Math.min(100, (key.frame/displayMax)*100));
+  if(timelineDrag.el) timelineDrag.el.style.left = leftPct+'%';
   activeIdx = SEQ.findIndex(k=>k.name===timelineDrag.name);
-  playT = (SEQ[activeIdx]?.frame || 0) / REF_FPS;
+  playT = (key.frame||0) / REF_FPS;
   scrubActive = false;
   const p = PHASES[activePhase];
   if(p) applyPose(p);
   const pn=document.getElementById('phasenow');
-  if(pn){ pn.textContent=activePhase.toUpperCase()+' @ '+(SEQ[activeIdx]?.frame||0)+'F'; pn.classList.remove('playing'); }
+  if(pn){ pn.textContent=activePhase.toUpperCase()+' @ '+key.frame+'F'; pn.classList.remove('playing'); }
   const rs=document.getElementById('rscrub');
   if(rs){ rs.value = Math.max(0, Math.min(1000, (playT / Math.max(totalTime(), 0.0001)) * 1000)); }
-  scheduleTimelineUiRefresh({controls:true, pose:true});
+  const tlph=document.querySelector('.timeline-playhead');
+  if(tlph) tlph.style.left = leftPct+'%';
 }
-function startTimelineMarkerDrag(e, name){
+function startTimelineMarkerDrag(e, name, el){
   const key = SEQ.find(k=>k.name===name);
   if(!key) return;
   if(key.name === 'idle'){ setActiveKey(0); return; }
@@ -1437,9 +1426,10 @@ function startTimelineMarkerDrag(e, name){
   if(playing){ playing=false; updateUI(); }
   activePhase = name;
   activeIdx = SEQ.findIndex(k=>k.name===name);
-  timelineDrag = {name, startX:e.clientX, lastDesired:key.frame, didMove:false, historyPushed:false};
+  timelineDrag = {name, el:el||null, startX:e.clientX, lastDesired:key.frame, didMove:false, historyPushed:false};
   const bar=document.getElementById('timelineBar'); if(bar) bar.classList.add('dragging');
-  setActiveKey(activeIdx);
+  // 注意:不在這裡呼叫 setActiveKey/buildTimelineUI — 那會重建 DOM、把剛抓住的 marker 砍掉。
+  if(el){ el.classList.add('dragging','on'); try{ el.setPointerCapture(e.pointerId); }catch(_){} }
   window.addEventListener('pointermove', onTimelineDragMove, {passive:false});
   window.addEventListener('pointerup', endTimelineMarkerDrag, {once:true});
   window.addEventListener('pointercancel', endTimelineMarkerDrag, {once:true});
@@ -1452,13 +1442,12 @@ function onTimelineDragMove(e){
 function endTimelineMarkerDrag(){
   if(!timelineDrag) return;
   const changed = timelineDrag.didMove;
+  const name = timelineDrag.name;
   timelineDrag = null;
   const bar=document.getElementById('timelineBar'); if(bar) bar.classList.remove('dragging');
   window.removeEventListener('pointermove', onTimelineDragMove);
   normalizeTimelineInPlace();
-  buildPhaseTabs();
-  buildTimingControls();
-  refreshSliders();
+  setActiveKey(SEQ.findIndex(k=>k.name===name));   // 收尾:完整選取 + 重建 timeline(此時重建才安全)
   if(changed) scheduleAutosave();
 }
 
@@ -1484,7 +1473,7 @@ function buildTimelineUI(){
     m.textContent=i;
     m.title=(i===0?`${s.name} 固定 @ 0f`:`拖曳改 frame · ${s.name} @ ${s.frame}f`);
     m.addEventListener('click',()=>setActiveKey(i));
-    m.addEventListener('pointerdown',e=>startTimelineMarkerDrag(e,s.name));
+    m.addEventListener('pointerdown',e=>startTimelineMarkerDrag(e,s.name,m));
     bar.appendChild(m);
 
     const row=document.createElement('div');
