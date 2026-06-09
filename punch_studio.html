@@ -369,7 +369,7 @@ const D2R = Math.PI/180;
 const REF_FPS = 60;
 
 // ===== Pose data model =====
-// 41 軸 / phase(根 7:含 squat 巨集 + 脊椎 3 + 頭 3 + 雙手 12 + 雙腿 16:含雙腳接觸鎖)
+// 47 軸 / phase(根 7 + 脊椎 3 + 頭 3 + 雙手 16:含腕 wx/wy + 雙腿 18:含接觸鎖 + 腳尖朝向)
 // scale 軸:1=原大小、>1=放大(GetAmped 風攻擊命中放大)、<1=縮小(攻擊時身體縮)
 const POSE_KEYS = [
   'root_y','root_x','root_py','root_pz','sq','body_scale','squat',
@@ -379,7 +379,9 @@ const POSE_KEYS = [
   'aR_sx','aR_sy','aR_sz','aR_ex','aR_idle','aR_scale',
   'lL_hx','lL_hy','lL_hz','lL_kx','lL_ax','lL_idle','lL_scale',
   'lR_hx','lR_hy','lR_hz','lR_kx','lR_ax','lR_idle','lR_scale',
-  'lL_contact','lR_contact'   // 腳掌接觸鎖:0=平踩 1=墊腳(抬跟) 2=抬起(離地,不當地面錨點)
+  'lL_contact','lR_contact',  // 腳掌接觸鎖:0=平踩 1=墊腳(抬跟) 2=抬起(離地,不當地面錨點)
+  'aL_wx','aL_wy','aR_wx','aR_wy',   // 腕關節:wx 屈伸 / wy 沿前臂軸扭轉(旋前旋後)
+  'lL_ty','lR_ty'                    // 腳尖朝向(踝 Y;×side,正=外八)— 可獨立於髖瞄準腳尖
 ];
 function defaultPoseValue(k){
   // 所有 scale 類型預設必須是 1；重置/匯入/匯出都走這個函式，避免資料變 0。
@@ -720,7 +722,9 @@ const SLIDER_GROUPS = [
     ['aL_sz', '肩 Z(外展/側平舉,正=往外)', -45, 170, 1, '°'],
     ['aL_ex', '肘(0=直 / 180=折)', -20, 160, 1, '°'],
     ['aL_idle', '→ IDLE 比例(1=強制垂下)', 0, 1, 0.01, ''],
-    ['aL_scale', '前臂/拳頭縮放(命中放大)', 0.5, 2.5, 0.01, '×']
+    ['aL_scale', '前臂/拳頭縮放(命中放大)', 0.5, 2.5, 0.01, '×'],
+    ['aL_wx', '腕 X(屈伸/勾腕)', -90, 90, 1, '°'],
+    ['aL_wy', '腕 Y(扭轉/旋前旋後)', -90, 90, 1, '°']
   ]},
   {h:'右手 ARM R(後手)', cls:'arms', keys:[
     ['aR_sx', '肩 X(上下/前後)', -180, 60, 1, '°'],
@@ -728,27 +732,31 @@ const SLIDER_GROUPS = [
     ['aR_sz', '肩 Z(外展/側平舉,正=往外)', -45, 170, 1, '°'],
     ['aR_ex', '肘(0=直 / 180=折)', -20, 160, 1, '°'],
     ['aR_idle', '→ IDLE 比例(1=強制垂下)', 0, 1, 0.01, ''],
-    ['aR_scale', '前臂/拳頭縮放(命中放大)', 0.5, 2.5, 0.01, '×']
+    ['aR_scale', '前臂/拳頭縮放(命中放大)', 0.5, 2.5, 0.01, '×'],
+    ['aR_wx', '腕 X(屈伸/勾腕)', -90, 90, 1, '°'],
+    ['aR_wy', '腕 Y(扭轉/旋前旋後)', -90, 90, 1, '°']
   ]},
   {h:'左腿 LEG L(前腿)', cls:'legs', keys:[
     ['lL_hx', '髖 X(前後擺)', -60, 60, 1, '°'],
-    ['lL_hy', '髖 Y(外旋/腳尖外八,正=外)', -60, 60, 1, '°'],
-    ['lL_hz', '髖 Z(橫向張開/O腿,正=往外)', -45, 60, 1, '°'],
+    ['lL_hy', '髖 Y(外旋/整條腿轉,正=外)', -150, 150, 1, '°'],
+    ['lL_hz', '髖 Z(橫向張開/劈腿,正=往外)', -60, 120, 1, '°'],
     ['lL_kx', '膝(0=直 / 90=蹲)', -20, 90, 1, '°'],
     ['lL_ax', '腳踝微調(自動壓平外的額外)', -60, 60, 1, '°'],
     ['lL_idle', '→ IDLE 比例(1=強制直立)', 0, 1, 0.01, ''],
     ['lL_scale', '小腿/腳掌縮放(命中放大)', 0.5, 2.5, 0.01, '×'],
-    ['lL_contact', '接觸鎖(0=平踩 1=墊腳 2=抬起)', 0, 2, 1, '']
+    ['lL_contact', '接觸鎖(0=平踩 1=墊腳 2=抬起)', 0, 2, 1, ''],
+    ['lL_ty', '腳尖朝向(踝 Y,正=外八)', -120, 120, 1, '°']
   ]},
   {h:'右腿 LEG R(後腿)', cls:'legs', keys:[
     ['lR_hx', '髖 X(前後擺)', -60, 60, 1, '°'],
-    ['lR_hy', '髖 Y(外旋/腳尖外八,正=外)', -60, 60, 1, '°'],
-    ['lR_hz', '髖 Z(橫向張開/O腿,正=往外)', -45, 60, 1, '°'],
+    ['lR_hy', '髖 Y(外旋/整條腿轉,正=外)', -150, 150, 1, '°'],
+    ['lR_hz', '髖 Z(橫向張開/劈腿,正=往外)', -60, 120, 1, '°'],
     ['lR_kx', '膝(0=直 / 90=蹲)', -20, 90, 1, '°'],
     ['lR_ax', '腳踝微調(自動壓平外的額外)', -60, 60, 1, '°'],
     ['lR_idle', '→ IDLE 比例(1=強制直立)', 0, 1, 0.01, ''],
     ['lR_scale', '小腿/腳掌縮放(命中放大)', 0.5, 2.5, 0.01, '×'],
-    ['lR_contact', '接觸鎖(0=平踩 1=墊腳 2=抬起)', 0, 2, 1, '']
+    ['lR_contact', '接觸鎖(0=平踩 1=墊腳 2=抬起)', 0, 2, 1, ''],
+    ['lR_ty', '腳尖朝向(踝 Y,正=外八)', -120, 120, 1, '°']
   ]}
 ];
 
@@ -856,7 +864,7 @@ const DIM_DEFAULTS = Object.assign({}, DIM);
 
 
 // ===== State safety: JSON save/load, undo/redo, autosave =====
-const STATE_VERSION = 3;
+const STATE_VERSION = 4;
 const STORAGE_KEY = 'PUNCH_STUDIO_AUTOSAVE_V2';
 let UNDO_STACK = [];
 let REDO_STACK = [];
@@ -1014,10 +1022,11 @@ function arm2(side){
   const elbow=solid(new THREE.IcosahedronGeometry(0.155*t,0), SLEEVE, true);
   elbow.scale.set(1.0,0.9,1.0); el.add(elbow);
   const lm=box(0.22*t, al, 0.24*t, SLEEVE); lm.position.y=-al/2; el.add(lm);
-  const cuff=box(0.27*t,0.10,0.29*t,CUFF); cuff.position.y=-al; el.add(cuff);
+  const wr=new THREE.Group(); wr.position.set(0,-al,0); el.add(wr);   // 腕關節(前臂末端)
+  const cuff=box(0.27*t,0.10,0.29*t,CUFF); cuff.position.y=0; wr.add(cuff);
   const fist=solid(new THREE.BoxGeometry(0.42*fs,0.40*fs,0.46*fs), SKIN, true);
-  fist.position.set(0,-al-0.18*fs,0.02); el.add(fist);
-  return {sh, el, lm, fist, side};
+  fist.position.set(0,-0.18*fs,0.02); wr.add(fist);
+  return {sh, el, wr, lm, fist, side};
 }
 function leg2(side){
   const PANT=0x2733cc, CUFF=0xeeeeee, SHOE=0x161620;     // 藍褲 / 白腳踝袖口 / 黑鞋
@@ -1085,6 +1094,9 @@ function applyPose(p){
   armL.el.rotation.set(-p.aL_ex*aLw*D2R, 0, 0);   // 負號:正值 = 手肘往前彎(解剖正確)
   armR.sh.rotation.set(p.aR_sx*aRw*D2R, p.aR_sy*aRw*D2R, (p.aR_sz||0)*aRw*armR.side*D2R);
   armR.el.rotation.set(-p.aR_ex*aRw*D2R, 0, 0);
+  // 腕關節:wx 屈伸 · wy 沿前臂軸扭轉(旋前旋後)
+  armL.wr.rotation.set((p.aL_wx||0)*aLw*D2R, (p.aL_wy||0)*aLw*D2R, 0);
+  armR.wr.rotation.set((p.aR_wx||0)*aRw*D2R, (p.aR_wy||0)*aRw*D2R, 0);
   // 髖:X=前後擺、Z=橫向張開(×side → 正值兩腿都往外張成 O 型腿);膝 X=蹲
   // 蹲下 macro:整體屈膝(膝 +squat、髖 -0.7×squat),身體靠自動踩地自然下沉
   const sqd = p.squat||0;
@@ -1093,8 +1105,9 @@ function applyPose(p){
   legL.hp.rotation.set(hxL*lLw*D2R, (p.lL_hy||0)*lLw*legL.side*D2R, (p.lL_hz||0)*lLw*legL.side*D2R); legL.kn.rotation.set(kxL*lLw*D2R, 0, 0);
   legR.hp.rotation.set(hxR*lRw*D2R, (p.lR_hy||0)*lRw*legR.side*D2R, (p.lR_hz||0)*lRw*legR.side*D2R); legR.kn.rotation.set(kxR*lRw*D2R, 0, 0);
   // 腳踝:自動把腳掌壓平(用蹲下後的有效角度),ax 為額外手動微調
-  legL.ankle.rotation.x = (-(hxL + kxL) + (p.lL_ax||0)) * lLw * D2R;
-  legR.ankle.rotation.x = (-(hxR + kxR) + (p.lR_ax||0)) * lRw * D2R;
+  // 腳踝:X=自動壓平+ax 微調;Y=腳尖朝向(ty,×side)可獨立於髖瞄準腳尖
+  legL.ankle.rotation.set((-(hxL + kxL) + (p.lL_ax||0)) * lLw * D2R, (p.lL_ty||0)*lLw*legL.side*D2R, 0);
+  legR.ankle.rotation.set((-(hxR + kxR) + (p.lR_ax||0)) * lRw * D2R, (p.lR_ty||0)*lRw*legR.side*D2R, 0);
   // 腳掌接觸鎖:0=平踩 1=墊腳(抬跟,以腳尖為支點) 2=抬起(離地)
   const cL = Math.round(p.lL_contact||0), cR = Math.round(p.lR_contact||0);
   const HEEL_LIFT = 55*D2R;   // 墊腳抬跟量(正 ankle.x = 趾下、跟上)
@@ -1724,10 +1737,11 @@ document.getElementById('mirrorBtn').addEventListener('click',()=>{
   pushHistory();
   const p = PHASES[activePhase];
   const swap = (a,b)=>{const t=p[a]; p[a]=p[b]; p[b]=t;};
-  swap('aL_sx','aR_sx'); swap('aL_sz','aR_sz'); swap('aL_ex','aR_ex'); swap('aL_idle','aR_idle'); swap('aL_scale','aR_scale');
-  swap('lL_hx','lR_hx'); swap('lL_hy','lR_hy'); swap('lL_hz','lR_hz'); swap('lL_kx','lR_kx'); swap('lL_ax','lR_ax'); swap('lL_idle','lR_idle'); swap('lL_scale','lR_scale');
+  swap('aL_sx','aR_sx'); swap('aL_sz','aR_sz'); swap('aL_ex','aR_ex'); swap('aL_idle','aR_idle'); swap('aL_scale','aR_scale'); swap('aL_wx','aR_wx');
+  swap('lL_hx','lR_hx'); swap('lL_hy','lR_hy'); swap('lL_hz','lR_hz'); swap('lL_kx','lR_kx'); swap('lL_ax','lR_ax'); swap('lL_idle','lR_idle'); swap('lL_scale','lR_scale'); swap('lL_contact','lR_contact'); swap('lL_ty','lR_ty');
   // Y 軸鏡像時要反號
   const tmpY = p.aL_sy; p.aL_sy = -p.aR_sy; p.aR_sy = -tmpY;
+  const tmpWy = p.aL_wy||0; p.aL_wy = -(p.aR_wy||0); p.aR_wy = -tmpWy;
   // root twist 與 head_y 也反號
   p.root_y = -p.root_y;
   p.spine_y = -(p.spine_y || 0);
