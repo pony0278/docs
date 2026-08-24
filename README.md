@@ -3,7 +3,7 @@
 Q5. 勝負判定
 
 
-
+https://raw.githack.com/pony0278/Blocky-Sword-Battle-Royale/86c426e44ceb38517fce99657a29eed7f1c0a57d/tools/action-studio/shield-driven-contact-coupling-lab.html
 
 
 地城入侵模式的勝負條件：
